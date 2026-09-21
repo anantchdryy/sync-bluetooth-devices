@@ -37,6 +37,8 @@ public:
   [[nodiscard]] PlaybackClock::Frame currentPlaybackFrame() const noexcept;
   [[nodiscard]] std::optional<PlaybackClock::Timestamp>
   expectedPlaybackTimestamp() const;
+  [[nodiscard]] std::optional<PlaybackClock::Timestamp>
+  expectedPlaybackTimestamp(PlaybackClock::Frame frame) const;
   [[nodiscard]] PlaybackClock::Duration elapsedPlaybackTime() const noexcept;
 
 private:

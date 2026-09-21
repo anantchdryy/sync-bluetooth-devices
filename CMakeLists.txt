@@ -29,6 +29,16 @@ add_library(playback_clock STATIC core/src/PlaybackClock.cpp)
 target_include_directories(playback_clock PUBLIC core/include)
 target_compile_features(playback_clock PUBLIC cxx_std_20)
 
+add_library(network_audio STATIC
+    network/src/PacketSerializer.cpp
+    network/src/UdpAudioSender.cpp
+)
+target_include_directories(network_audio PUBLIC network/include)
+target_compile_features(network_audio PUBLIC cxx_std_20)
+if(WIN32)
+    target_link_libraries(network_audio PRIVATE ws2_32)
+endif()
+
 add_library(desktop_audio_player STATIC
     desktop/src/DesktopAudioPlayer.cpp
 )
@@ -39,8 +49,16 @@ target_link_libraries(desktop_audio_player
 )
 target_compile_features(desktop_audio_player PUBLIC cxx_std_20)
 
+add_library(desktop_network_host STATIC desktop/src/DesktopNetworkHost.cpp)
+target_include_directories(desktop_network_host PUBLIC desktop/include)
+target_link_libraries(desktop_network_host
+    PUBLIC playback_clock network_audio
+    PRIVATE miniaudio_backend
+)
+target_compile_features(desktop_network_host PUBLIC cxx_std_20)
+
 add_executable(syncaudio desktop/src/main.cpp)
-target_link_libraries(syncaudio PRIVATE desktop_audio_player)
+target_link_libraries(syncaudio PRIVATE desktop_audio_player desktop_network_host)
 
 function(enable_project_warnings target)
     if(MSVC)
@@ -52,9 +70,16 @@ endfunction()
 
 enable_project_warnings(desktop_audio_player)
 enable_project_warnings(playback_clock)
+enable_project_warnings(network_audio)
+enable_project_warnings(desktop_network_host)
 enable_project_warnings(syncaudio)
 
 if(BUILD_TESTING)
+    add_executable(packet_serializer_tests tests/PacketSerializerTests.cpp)
+    target_link_libraries(packet_serializer_tests PRIVATE network_audio)
+    enable_project_warnings(packet_serializer_tests)
+    add_test(NAME packet_serializer_tests COMMAND packet_serializer_tests)
+
     add_executable(playback_clock_tests tests/PlaybackClockTests.cpp)
     target_link_libraries(playback_clock_tests PRIVATE playback_clock)
     enable_project_warnings(playback_clock_tests)

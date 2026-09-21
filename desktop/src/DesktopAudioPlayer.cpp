@@ -164,10 +164,15 @@ public:
 
   [[nodiscard]] std::optional<PlaybackClock::Timestamp>
   expectedPlaybackTimestamp() const {
+    return expectedPlaybackTimestamp(currentPlaybackFrame());
+  }
+
+  [[nodiscard]] std::optional<PlaybackClock::Timestamp>
+  expectedPlaybackTimestamp(PlaybackClock::Frame frame) const {
     if (!playbackClock_) {
       return std::nullopt;
     }
-    return playbackClock_->frameToTimestamp(currentPlaybackFrame());
+    return playbackClock_->frameToTimestamp(frame);
   }
 
   [[nodiscard]] PlaybackClock::Duration elapsedPlaybackTime() const noexcept {
@@ -271,6 +276,12 @@ PlaybackClock::Frame DesktopAudioPlayer::currentPlaybackFrame() const noexcept {
 std::optional<PlaybackClock::Timestamp>
 DesktopAudioPlayer::expectedPlaybackTimestamp() const {
   return impl_->expectedPlaybackTimestamp();
+}
+
+std::optional<PlaybackClock::Timestamp>
+DesktopAudioPlayer::expectedPlaybackTimestamp(
+    PlaybackClock::Frame frame) const {
+  return impl_->expectedPlaybackTimestamp(frame);
 }
 
 PlaybackClock::Duration
