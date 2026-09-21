@@ -25,11 +25,18 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(miniaudio_backend PUBLIC dl m pthread)
 endif()
 
+add_library(playback_clock STATIC core/src/PlaybackClock.cpp)
+target_include_directories(playback_clock PUBLIC core/include)
+target_compile_features(playback_clock PUBLIC cxx_std_20)
+
 add_library(desktop_audio_player STATIC
     desktop/src/DesktopAudioPlayer.cpp
 )
 target_include_directories(desktop_audio_player PUBLIC desktop/include)
-target_link_libraries(desktop_audio_player PRIVATE miniaudio_backend)
+target_link_libraries(desktop_audio_player
+    PUBLIC playback_clock
+    PRIVATE miniaudio_backend
+)
 target_compile_features(desktop_audio_player PUBLIC cxx_std_20)
 
 add_executable(syncaudio desktop/src/main.cpp)
@@ -44,9 +51,15 @@ function(enable_project_warnings target)
 endfunction()
 
 enable_project_warnings(desktop_audio_player)
+enable_project_warnings(playback_clock)
 enable_project_warnings(syncaudio)
 
 if(BUILD_TESTING)
+    add_executable(playback_clock_tests tests/PlaybackClockTests.cpp)
+    target_link_libraries(playback_clock_tests PRIVATE playback_clock)
+    enable_project_warnings(playback_clock_tests)
+    add_test(NAME playback_clock_tests COMMAND playback_clock_tests)
+
     add_executable(desktop_audio_player_tests
         tests/DesktopAudioPlayerTests.cpp
     )

@@ -63,6 +63,12 @@ int main() {
     {
       DesktopAudioPlayer player;
       require(!player.isLoaded(), "A new player must not be loaded");
+      require(player.currentPlaybackFrame() == 0,
+              "A new player must begin at frame zero");
+      require(!player.expectedPlaybackTimestamp().has_value(),
+              "A new player must not have a playback timestamp");
+      require(player.elapsedPlaybackTime() == PlaybackClock::Duration::zero(),
+              "A new player must have zero elapsed playback time");
 
       bool missingFileRejected = false;
       try {

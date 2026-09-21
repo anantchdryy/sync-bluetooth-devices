@@ -28,7 +28,17 @@ int main(int argc, char *argv[]) {
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     player.stop();
-    std::cout << "Playback finished.\n";
+    const auto elapsedSeconds =
+        std::chrono::duration<double>(player.elapsedPlaybackTime()).count();
+    std::cout << "Playback finished.\n"
+              << "Final frame: " << player.currentPlaybackFrame() << '\n'
+              << "Elapsed:     " << elapsedSeconds << " seconds\n";
+
+    if (const auto timestamp = player.expectedPlaybackTimestamp()) {
+      std::cout << "Expected frame timestamp: "
+                << timestamp->time_since_epoch().count()
+                << " ns (steady clock)\n";
+    }
   } catch (const std::exception &error) {
     std::cerr << "Error: " << error.what() << '\n';
     return 1;

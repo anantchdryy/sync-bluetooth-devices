@@ -1,8 +1,11 @@
 #pragma once
 
+#include "PlaybackClock.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 
 struct AudioMetadata {
   std::uint32_t sampleRate{};
@@ -31,6 +34,10 @@ public:
   [[nodiscard]] bool isPlaying() const noexcept;
   [[nodiscard]] bool isLoaded() const noexcept;
   [[nodiscard]] const AudioMetadata &metadata() const noexcept;
+  [[nodiscard]] PlaybackClock::Frame currentPlaybackFrame() const noexcept;
+  [[nodiscard]] std::optional<PlaybackClock::Timestamp>
+  expectedPlaybackTimestamp() const;
+  [[nodiscard]] PlaybackClock::Duration elapsedPlaybackTime() const noexcept;
 
 private:
   class Impl;

@@ -1,8 +1,9 @@
 # SyncAudio
 
-Phase 1 is a desktop command-line application that loads and plays a local WAV
-file. Networking, synchronization, Bluetooth management, compression, GUI, and
-iPhone support are intentionally out of scope for this phase.
+The project currently contains the first two desktop phases: local WAV playback
+and a reusable monotonic playback timeline. Networking, multi-device
+synchronization, Bluetooth management, compression, GUI, and iPhone support are
+intentionally not implemented yet.
 
 ## Requirements
 
@@ -50,11 +51,25 @@ On macOS/Linux, or with a single-configuration generator:
 
 The program prints the decoded sample rate, channel count, and duration, plays
 the file through the default audio output device, and exits when playback ends.
+It then reports the final playback frame, elapsed monotonic time, and the
+frame's expected steady-clock timestamp.
+
+## Playback timeline
+
+`PlaybackClock` maps PCM frame numbers to `std::chrono::steady_clock`
+timestamps using the file's sample rate. It uses nanosecond durations and
+integer conversion arithmetic, and never depends on the system/wall clock.
+
+`DesktopAudioPlayer` exposes the current timeline frame, that frame's expected
+timestamp, and elapsed playback time. The current estimate is capped at audio
+frames already submitted to miniaudio. This phase does not yet compensate for
+audio-driver, device, wired, or Bluetooth output latency.
 
 ## Project layout
 
+- `core/include` and `core/src` — portable playback clock
 - `desktop/include` — desktop audio player public interface
 - `desktop/src` — miniaudio-backed implementation and CLI
-- `tests` — tests that validate file handling and WAV metadata without opening
-  an audio device
+- `tests` — clock conversion/edge-case tests plus file handling and WAV
+  metadata tests that do not require an audio device
 - `core` and `ios` are deferred until a phase requires them
