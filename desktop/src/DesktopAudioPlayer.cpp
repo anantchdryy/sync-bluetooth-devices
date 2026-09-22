@@ -187,13 +187,30 @@ public:
   }
 
 private:
-  void freezeTimeline() noexcept {
+  void freezeTimeline(bool streamCompleted = false) noexcept {
     if (!timelineRunning_.load(std::memory_order_acquire) || !playbackClock_) {
       return;
     }
 
-    stoppedFrame_.store(currentTimelineFrame(), std::memory_order_release);
-    stoppedElapsedNanoseconds_.store(playbackClock_->elapsed().count(),
+    const auto stoppedFrame =
+        streamCompleted ? submittedFrames_.load(std::memory_order_acquire)
+                        : currentTimelineFrame();
+    auto stoppedElapsed = playbackClock_->elapsed();
+    if (streamCompleted) {
+      try {
+        const auto scheduledElapsed =
+            playbackClock_->frameToTimestamp(stoppedFrame) -
+            playbackClock_->startTime();
+        if (scheduledElapsed > stoppedElapsed) {
+          stoppedElapsed = scheduledElapsed;
+        }
+      } catch (const std::overflow_error &) {
+        // A real decoded stream cannot approach the clock's numeric limit.
+      }
+    }
+
+    stoppedFrame_.store(stoppedFrame, std::memory_order_release);
+    stoppedElapsedNanoseconds_.store(stoppedElapsed.count(),
                                      std::memory_order_release);
     timelineRunning_.store(false, std::memory_order_release);
   }
@@ -220,7 +237,7 @@ private:
     if (self->endReached_.load(std::memory_order_acquire)) {
       // One silent callback allows the final decoded buffer to drain to the
       // device.
-      self->freezeTimeline();
+      self->freezeTimeline(true);
       self->playing_.store(false, std::memory_order_release);
       return;
     }
