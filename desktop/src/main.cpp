@@ -1,3 +1,5 @@
+#include "ClockSync.hpp"
+#include "DesktopAudioClient.hpp"
 #include "DesktopAudioPlayer.hpp"
 #include "DesktopNetworkHost.hpp"
 
@@ -15,18 +17,25 @@
 
 namespace {
 
+enum class Mode { Local, Host, Client };
+
 struct CommandLine {
-  bool hostMode{false};
-  std::string audioPath;
+  Mode mode{Mode::Local};
+  std::string argument;
   std::string destinationAddress{"255.255.255.255"};
-  std::uint16_t port{40'100};
+  std::string bindAddress{"0.0.0.0"};
+  std::uint16_t audioPort{40'100};
+  std::uint16_t clockSyncPort{40'101};
 };
 
 void printUsage() {
   std::cerr
       << "Usage:\n"
       << "  syncaudio path/to/file.wav\n"
-      << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT]\n";
+      << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT] "
+         "[--control-port PORT]\n"
+      << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
+         "[--control-port PORT]\n";
 }
 
 std::uint16_t parsePort(std::string_view text) {
@@ -42,25 +51,43 @@ std::uint16_t parsePort(std::string_view text) {
 
 CommandLine parseCommandLine(int argc, char *argv[]) {
   if (argc == 2) {
-    return CommandLine{false, argv[1]};
+    return CommandLine{Mode::Local, argv[1]};
   }
-  if (argc < 3 || std::string_view(argv[1]) != "host") {
+  if (argc < 3) {
     throw std::invalid_argument("Invalid command line");
   }
 
   CommandLine result;
-  result.hostMode = true;
-  result.audioPath = argv[2];
+  const std::string_view mode = argv[1];
+  if (mode == "host") {
+    result.mode = Mode::Host;
+  } else if (mode == "client") {
+    result.mode = Mode::Client;
+  } else {
+    throw std::invalid_argument("Mode must be 'host' or 'client'");
+  }
+  result.argument = argv[2];
+
   for (int index = 3; index < argc; ++index) {
     const std::string_view option = argv[index];
-    if (option == "--address" && index + 1 < argc) {
+    if (option == "--address" && index + 1 < argc &&
+        result.mode == Mode::Host) {
       result.destinationAddress = argv[++index];
+    } else if (option == "--bind" && index + 1 < argc &&
+               result.mode == Mode::Client) {
+      result.bindAddress = argv[++index];
     } else if (option == "--port" && index + 1 < argc) {
-      result.port = parsePort(argv[++index]);
+      result.audioPort = parsePort(argv[++index]);
+    } else if (option == "--control-port" && index + 1 < argc) {
+      result.clockSyncPort = parsePort(argv[++index]);
     } else {
-      throw std::invalid_argument("Unknown or incomplete option: " +
-                                  std::string(option));
+      throw std::invalid_argument(
+          "Unknown, incomplete, or inapplicable option: " +
+          std::string(option));
     }
+  }
+  if (result.audioPort == result.clockSyncPort) {
+    throw std::invalid_argument("Audio and control ports must be different");
   }
   return result;
 }
@@ -95,7 +122,7 @@ void printPlaybackSummary(const DesktopAudioPlayer &player) {
 
 void runLocal(const CommandLine &commandLine) {
   DesktopAudioPlayer player;
-  player.load(commandLine.audioPath);
+  player.load(commandLine.argument);
   printMetadata(player.metadata());
   std::cout << "Playing...\n";
   player.play();
@@ -105,29 +132,32 @@ void runLocal(const CommandLine &commandLine) {
 
 void runHost(const CommandLine &commandLine) {
   DesktopAudioPlayer player;
-  player.load(commandLine.audioPath);
+  player.load(commandLine.argument);
   printMetadata(player.metadata());
 
   DesktopNetworkHostConfig config;
   config.destinationAddress = commandLine.destinationAddress;
-  config.port = commandLine.port;
+  config.port = commandLine.audioPort;
   DesktopNetworkHost host(config);
+  ClockSyncServer clockServer("0.0.0.0", commandLine.clockSyncPort);
 
   std::cout << "UDP destination: " << config.destinationAddress << ':'
             << config.port << '\n'
+            << "Clock-sync port: " << commandLine.clockSyncPort << '\n'
             << "PCM format:      signed 16-bit little-endian\n"
             << "Playing locally and streaming...\n";
 
-  player.play();
+  const auto scheduledStart = PlaybackClock::now() + config.sendAhead;
+  player.playAt(scheduledStart);
   const auto playbackStart = player.expectedPlaybackTimestamp(0);
   if (!playbackStart) {
     throw std::runtime_error("Playback timeline did not start");
   }
 
   const auto &metadata = player.metadata();
-  const auto stats = host.streamFile(
-      commandLine.audioPath, *playbackStart, metadata.sampleRate,
-      static_cast<std::uint16_t>(metadata.channels));
+  const auto stats =
+      host.streamFile(commandLine.argument, *playbackStart, metadata.sampleRate,
+                      static_cast<std::uint16_t>(metadata.channels));
   waitForPlayback(player);
 
   std::cout << "Network stream finished.\n"
@@ -140,15 +170,52 @@ void runHost(const CommandLine &commandLine) {
   printPlaybackSummary(player);
 }
 
+void runClient(const CommandLine &commandLine) {
+  DesktopAudioClientConfig config;
+  config.bindAddress = commandLine.bindAddress;
+  config.audioPort = commandLine.audioPort;
+  config.clockSyncPort = commandLine.clockSyncPort;
+
+  std::cout << "Waiting for host " << commandLine.argument << "...\n"
+            << "Audio listen port: " << config.audioPort << '\n'
+            << "Clock-sync port:   " << config.clockSyncPort << '\n';
+
+  DesktopAudioClient client(config);
+  const auto stats = client.run(commandLine.argument);
+  std::cout << std::fixed << std::setprecision(3) << "Client stream finished.\n"
+            << "Starting frame:            " << stats.startingFrame << '\n'
+            << "Final playback frame:      " << stats.finalPlaybackFrame << '\n'
+            << "Packets received:          " << stats.packetsReceived << '\n'
+            << "Packets lost:              " << stats.packetsLost << '\n'
+            << "Out-of-order packets:      " << stats.outOfOrderPackets << '\n'
+            << "Final buffer depth:        "
+            << stats.finalBufferDepthMilliseconds << " ms\n"
+            << "Peak buffer depth:         "
+            << stats.peakBufferDepthMilliseconds << " ms\n"
+            << "Host-client clock offset:  " << stats.clockOffsetMilliseconds
+            << " ms\n"
+            << "Clock-sync round-trip:     " << stats.clockRoundTripMilliseconds
+            << " ms\n"
+            << "Estimated playback delay: "
+            << stats.estimatedPlaybackDelayMilliseconds << " ms\n"
+            << "Underrun frames:           " << stats.underrunFrames << '\n';
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
   try {
     const auto commandLine = parseCommandLine(argc, argv);
-    if (commandLine.hostMode) {
-      runHost(commandLine);
-    } else {
+    switch (commandLine.mode) {
+    case Mode::Local:
       runLocal(commandLine);
+      break;
+    case Mode::Host:
+      runHost(commandLine);
+      break;
+    case Mode::Client:
+      runClient(commandLine);
+      break;
     }
     return 0;
   } catch (const std::invalid_argument &error) {

@@ -1,9 +1,10 @@
 # SyncAudio
 
 The project currently contains local WAV playback, a reusable monotonic
-playback timeline, and a UDP desktop host that sends raw PCM while continuing
-local playback. Client playback, clock synchronization, Bluetooth management,
-compression, GUI, and iPhone support are intentionally not implemented yet.
+playback timeline, a UDP desktop host, and a scheduled desktop client with a
+basic jitter buffer and clock-offset measurement. Continuous clock-drift
+correction, Bluetooth management, compression, GUI, and iPhone support are
+intentionally not implemented yet.
 
 ## Requirements
 
@@ -118,19 +119,87 @@ change the format.
 | 46 | 2 | PCM frame count |
 | 48 | variable | Interleaved PCM payload, at most 1,152 bytes |
 
-Packets are sent approximately 100 ms ahead of their presentation timestamp.
+Packets are sent approximately 500 ms ahead of their presentation timestamp.
 The 1,200-byte datagram ceiling avoids typical IP fragmentation. At 44.1 kHz
 stereo this limit produces 288-frame packets (about 6.53 ms); the shorter than
 preferred duration is necessary while sending uncompressed PCM. The monotonic
-timestamp is local to the host and will become meaningful to clients after a
-future clock-synchronization phase.
+timestamp is local to the host and is translated to the client's steady clock
+using the clock-offset measurement below.
+
+## Desktop client prototype
+
+The client listens for audio on UDP port `40100` and uses UDP port `40101` for
+clock-sync requests. Start the client before the host so it can receive the
+beginning of the stream.
+
+To test both processes on one Windows computer, open two PowerShell terminals.
+In terminal 1:
+
+```powershell
+.\build\Release\syncaudio.exe client 127.0.0.1
+```
+
+Then, in terminal 2:
+
+```powershell
+.\build\Release\syncaudio.exe host "C:\path\to\file.wav" --address 127.0.0.1
+```
+
+For two computers on the same LAN, run this on the client computer, replacing
+the address with the host computer's LAN IPv4 address:
+
+```powershell
+.\build\Release\syncaudio.exe client 192.168.1.10
+```
+
+Then run the host using either the default LAN broadcast destination or the
+client computer's LAN IPv4 address:
+
+```powershell
+.\build\Release\syncaudio.exe host "C:\path\to\file.wav" --address 192.168.1.20
+```
+
+Both machines must permit private-network UDP traffic on ports `40100` and
+`40101`. Override them consistently on both commands with `--port` and
+`--control-port`. The client bind address can be changed from `0.0.0.0` with
+`--bind`.
+
+The host schedules local playback 500 ms into the future, giving a waiting
+client time to initialize its audio device. The client selects a future packet,
+buffers instead of playing on arrival, and schedules that packet against the
+translated host timestamp plus a 20 ms safety delay. Missing packet ranges are
+rendered as silence. Final statistics include received, estimated lost,
+out-of-order, buffer depth, clock offset, clock round-trip, scheduling delay,
+and underrun frames.
+
+### Clock-offset measurement
+
+Clock synchronization uses small `SCLK` UDP messages on the control port. For
+each sample:
+
+- the client records `t1` and sends a request;
+- the host records receive time `t2` and response-send time `t3`;
+- the client records response time `t4`.
+
+The client calculates:
+
+```text
+round trip = (t4 - t1) - (t3 - t2)
+host - client offset = ((t2 - t1) + (t3 - t4)) / 2
+```
+
+Eight samples are requested and the lowest-round-trip sample is used. This
+phase measures a fixed offset only; it deliberately does not estimate or
+correct continuous clock drift. Reported playback delay is scheduler timing
+and does not include unknown speaker, Bluetooth, or audio-driver output latency.
 
 ## Project layout
 
-- `core/include` and `core/src` — portable playback clock
-- `network/include` and `network/src` — packet format, serialization, UDP sender
-- `desktop/include` — desktop audio player public interface
-- `desktop/src` — miniaudio-backed implementation and CLI
-- `tests` — packet serialization, clock conversion/edge-case, file handling,
-  and WAV metadata tests that do not require an audio device
+- `core/include` and `core/src` — portable playback clock and jitter buffer
+- `network/include` and `network/src` — packet serialization, UDP transport,
+  and clock-sync control messages
+- `desktop/include` — desktop player, host, and client interfaces
+- `desktop/src` — miniaudio-backed playback, scheduling, host/client, and CLI
+- `tests` — packet serialization, jitter buffer, clock sync, clock conversion,
+  file handling, and WAV metadata tests
 - `ios` is deferred until the iOS phase

@@ -11,7 +11,7 @@ struct DesktopNetworkHostConfig {
   std::string destinationAddress{"255.255.255.255"};
   std::uint16_t port{40'100};
   std::chrono::milliseconds desiredPacketDuration{10};
-  std::chrono::milliseconds sendAhead{100};
+  std::chrono::milliseconds sendAhead{500};
 };
 
 struct DesktopNetworkHostStats {

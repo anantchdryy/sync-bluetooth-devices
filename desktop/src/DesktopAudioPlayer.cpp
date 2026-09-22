@@ -79,7 +79,9 @@ public:
                   static_cast<double>(metadata_.sampleRate);
   }
 
-  void play() {
+  void play() { playAt(PlaybackClock::now()); }
+
+  void playAt(PlaybackClock::Timestamp startTime) {
     if (!decoderInitialized_) {
       throw std::logic_error("No audio file has been loaded");
     }
@@ -98,6 +100,7 @@ public:
     config.playback.format = decoder_.outputFormat;
     config.playback.channels = decoder_.outputChannels;
     config.sampleRate = decoder_.outputSampleRate;
+    config.periodSizeInMilliseconds = 10;
     config.dataCallback = &Impl::dataCallback;
     config.pUserData = this;
 
@@ -110,7 +113,7 @@ public:
     submittedFrames_.store(0, std::memory_order_release);
     stoppedFrame_.store(0, std::memory_order_release);
     stoppedElapsedNanoseconds_.store(0, std::memory_order_release);
-    playbackClock_.emplace(metadata_.sampleRate, PlaybackClock::now());
+    playbackClock_.emplace(metadata_.sampleRate, startTime);
     timelineRunning_.store(true, std::memory_order_release);
     playing_.store(true, std::memory_order_release);
 
@@ -234,6 +237,11 @@ private:
     std::memset(output, 0,
                 static_cast<std::size_t>(frameCount) * bytesPerFrame);
 
+    if (self->playbackClock_ &&
+        PlaybackClock::now() < self->playbackClock_->startTime()) {
+      return;
+    }
+
     if (self->endReached_.load(std::memory_order_acquire)) {
       // One silent callback allows the final decoded buffer to drain to the
       // device.
@@ -273,6 +281,10 @@ void DesktopAudioPlayer::load(const std::filesystem::path &path) {
 }
 
 void DesktopAudioPlayer::play() { impl_->play(); }
+
+void DesktopAudioPlayer::playAt(PlaybackClock::Timestamp startTime) {
+  impl_->playAt(startTime);
+}
 
 void DesktopAudioPlayer::stop() noexcept { impl_->stop(); }
 

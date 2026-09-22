@@ -29,6 +29,9 @@ public:
 
   // Starts playback from the beginning of the loaded file.
   void play();
+  // Starts playback from the beginning at a steady-clock timestamp. Until that
+  // time the output device emits silence.
+  void playAt(PlaybackClock::Timestamp startTime);
   void stop() noexcept;
 
   [[nodiscard]] bool isPlaying() const noexcept;
