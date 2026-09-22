@@ -22,6 +22,9 @@ struct DesktopAudioClientStats {
   double peakBufferDepthMilliseconds{};
   double clockOffsetMilliseconds{};
   double clockRoundTripMilliseconds{};
+  double estimatedDriftPpm{};
+  double bufferErrorMilliseconds{};
+  double correctionRatio{1.0};
   double estimatedPlaybackDelayMilliseconds{};
   std::uint64_t underrunFrames{};
 };

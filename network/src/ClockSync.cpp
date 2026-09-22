@@ -348,6 +348,7 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
   struct Sample {
     std::chrono::nanoseconds offset;
     std::chrono::nanoseconds roundTrip;
+    std::int64_t clientTime;
   };
   std::vector<Sample> samples;
   std::uint32_t requestId = 1;
@@ -420,7 +421,8 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
                        2.0L));
       if (roundTrip >= 0) {
         samples.push_back(Sample{std::chrono::nanoseconds{offset},
-                                 std::chrono::nanoseconds{roundTrip}});
+                                 std::chrono::nanoseconds{roundTrip},
+                                 t1 + (t4 - t1) / 2});
       }
     } catch (const std::invalid_argument &) {
       continue;
@@ -437,5 +439,6 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
                          return left.roundTrip < right.roundTrip;
                        });
   return ClockSyncEstimate{best->offset, best->roundTrip,
-                           static_cast<std::uint32_t>(samples.size())};
+                           static_cast<std::uint32_t>(samples.size()),
+                           best->clientTime};
 }

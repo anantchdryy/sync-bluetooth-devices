@@ -86,12 +86,29 @@ void testFormatValidation() {
   require(rejected, "A mid-stream format change must be rejected");
 }
 
+void testInterpolationLookahead() {
+  JitterBuffer buffer;
+  require(buffer.push(makePacket(0, 0, 1)), "Packet should be inserted");
+  std::array<std::int16_t, 8> first{};
+  std::array<std::int16_t, 4> overlap{};
+  require(buffer.readFrames(0, first, true) == 4,
+          "First rate-adjusted read failed");
+  require(buffer.packetCount() == 1,
+          "Lookahead sample must remain available");
+  require(buffer.readFrames(3, overlap, true) == 1 && overlap[0] == 7,
+          "Overlapping interpolation read lost its final sample");
+  static_cast<void>(buffer.readFrames(4, overlap, true));
+  require(buffer.packetCount() == 0,
+          "Packet should be discarded after the cursor passes it");
+}
+
 } // namespace
 
 int main() {
   try {
     testReorderingGapAndRead();
     testFormatValidation();
+    testInterpolationLookahead();
     std::cout << "JitterBuffer tests passed\n";
     return 0;
   } catch (const std::exception &error) {

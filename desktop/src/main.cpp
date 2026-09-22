@@ -196,6 +196,12 @@ void runClient(const CommandLine &commandLine) {
             << " ms\n"
             << "Clock-sync round-trip:     " << stats.clockRoundTripMilliseconds
             << " ms\n"
+            << "Estimated drift:           " << stats.estimatedDriftPpm
+            << " ppm\n"
+            << "Buffer error:              " << stats.bufferErrorMilliseconds
+            << " ms\n"
+            << "Correction ratio:          " << std::setprecision(6)
+            << stats.correctionRatio << std::setprecision(3) << '\n'
             << "Estimated playback delay: "
             << stats.estimatedPlaybackDelayMilliseconds << " ms\n"
             << "Underrun frames:           " << stats.underrunFrames << '\n';

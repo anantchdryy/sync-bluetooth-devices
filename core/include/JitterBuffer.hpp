@@ -28,7 +28,8 @@ public:
   // Missing frames remain silent. The return value is the number of frames
   // copied from received packets.
   std::uint32_t readFrames(std::uint64_t startFrame,
-                           std::span<std::int16_t> interleavedOutput);
+                           std::span<std::int16_t> interleavedOutput,
+                           bool retainLookahead = false);
 
   [[nodiscard]] std::optional<BufferedPacketTiming>
   firstPacketAtOrAfter(std::uint64_t hostTimestampNanoseconds) const;

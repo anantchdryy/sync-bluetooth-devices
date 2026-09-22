@@ -2,9 +2,8 @@
 
 The project currently contains local WAV playback, a reusable monotonic
 playback timeline, a UDP desktop host, and a scheduled desktop client with a
-basic jitter buffer and clock-offset measurement. Continuous clock-drift
-correction, Bluetooth management, compression, GUI, and iPhone support are
-intentionally not implemented yet.
+basic jitter buffer and gradual clock-drift correction. Bluetooth management,
+compression, GUI, and iPhone support are intentionally not implemented yet.
 
 ## Requirements
 
@@ -188,9 +187,15 @@ round trip = (t4 - t1) - (t3 - t2)
 host - client offset = ((t2 - t1) + (t3 - t4)) / 2
 ```
 
-Eight samples are requested and the lowest-round-trip sample is used. This
-phase measures a fixed offset only; it deliberately does not estimate or
-correct continuous clock drift. Reported playback delay is scheduler timing
+Eight samples are requested and the lowest-round-trip sample is used. The client
+repeats this measurement every five seconds. `DriftEstimator` fits recent offset
+samples to estimate the host clock's rate relative to the client clock in parts
+per million. `GradualDriftCorrector` combines that estimate with the current
+playback phase error and limits the requested source-frame consumption rate to
+within 500 ppm of normal. The client uses linear interpolation between PCM
+frames for these small rate changes; it does not discard large audio chunks.
+Final client statistics include clock offset, estimated drift, buffer/phase
+error, and the correction ratio. Reported playback delay is scheduler timing
 and does not include unknown speaker, Bluetooth, or audio-driver output latency.
 
 ## Project layout

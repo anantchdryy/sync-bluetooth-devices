@@ -61,7 +61,8 @@ bool JitterBuffer::push(const AudioPacket &packet) {
 
 std::uint32_t
 JitterBuffer::readFrames(std::uint64_t startFrame,
-                         std::span<std::int16_t> interleavedOutput) {
+                         std::span<std::int16_t> interleavedOutput,
+                         bool retainLookahead) {
   std::scoped_lock lock(mutex_);
   if (!format_) {
     std::fill(interleavedOutput.begin(), interleavedOutput.end(),
@@ -104,9 +105,10 @@ JitterBuffer::readFrames(std::uint64_t startFrame,
       copiedFrames += static_cast<std::uint32_t>(frames);
     }
 
-    if (packetEnd <= requestedEnd) {
+    if (!retainLookahead && packetEnd <= requestedEnd) {
       iterator = packets_.erase(iterator);
     } else {
+      // A rate-adjusted reader may need the last sample again at a boundary.
       ++iterator;
     }
   }

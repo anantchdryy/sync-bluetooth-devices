@@ -29,6 +29,10 @@ add_library(playback_clock STATIC core/src/PlaybackClock.cpp)
 target_include_directories(playback_clock PUBLIC core/include)
 target_compile_features(playback_clock PUBLIC cxx_std_20)
 
+add_library(drift_correction STATIC core/src/DriftCorrection.cpp)
+target_include_directories(drift_correction PUBLIC core/include)
+target_compile_features(drift_correction PUBLIC cxx_std_20)
+
 add_library(network_audio STATIC
     network/src/ClockSync.cpp
     network/src/PacketSerializer.cpp
@@ -68,7 +72,7 @@ target_compile_features(desktop_network_host PUBLIC cxx_std_20)
 add_library(desktop_audio_client STATIC desktop/src/DesktopAudioClient.cpp)
 target_include_directories(desktop_audio_client PUBLIC desktop/include)
 target_link_libraries(desktop_audio_client
-    PUBLIC jitter_buffer network_audio playback_clock
+    PUBLIC jitter_buffer network_audio playback_clock drift_correction
     PRIVATE miniaudio_backend
 )
 target_compile_features(desktop_audio_client PUBLIC cxx_std_20)
@@ -90,6 +94,7 @@ endfunction()
 
 enable_project_warnings(desktop_audio_player)
 enable_project_warnings(playback_clock)
+enable_project_warnings(drift_correction)
 enable_project_warnings(network_audio)
 enable_project_warnings(jitter_buffer)
 enable_project_warnings(desktop_network_host)
@@ -97,6 +102,11 @@ enable_project_warnings(desktop_audio_client)
 enable_project_warnings(syncaudio)
 
 if(BUILD_TESTING)
+    add_executable(drift_correction_tests tests/DriftCorrectionTests.cpp)
+    target_link_libraries(drift_correction_tests PRIVATE drift_correction)
+    enable_project_warnings(drift_correction_tests)
+    add_test(NAME drift_correction_tests COMMAND drift_correction_tests)
+
     add_executable(clock_sync_tests tests/ClockSyncTests.cpp)
     target_link_libraries(clock_sync_tests PRIVATE network_audio)
     enable_project_warnings(clock_sync_tests)

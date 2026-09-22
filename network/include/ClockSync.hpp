@@ -28,6 +28,7 @@ struct ClockSyncEstimate {
   std::chrono::nanoseconds hostMinusClientOffset{};
   std::chrono::nanoseconds roundTripTime{};
   std::uint32_t samples{};
+  std::int64_t clientSampleTimestampNanoseconds{};
 };
 
 class ClockSyncSerializer {

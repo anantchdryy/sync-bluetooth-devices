@@ -1,6 +1,7 @@
 #include "DesktopAudioClient.hpp"
 
 #include "ClockSync.hpp"
+#include "DriftCorrection.hpp"
 #include "JitterBuffer.hpp"
 #include "PacketSerializer.hpp"
 #include "PlaybackClock.hpp"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -22,6 +24,7 @@
 #include <thread>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <miniaudio.h>
 
@@ -158,6 +161,9 @@ public:
                         std::chrono::milliseconds configuredDelay)
       : jitterBuffer_(jitterBuffer), channelCount_(format.channelCount),
         configuredDelay_(configuredDelay) {
+    // Allocate outside the audio callback. Each rendering chunk needs at most
+    // 259 source frames at the bounded correction rate.
+    sourceSamples_.resize(260U * channelCount_);
     auto config = ma_device_config_init(ma_device_type_playback);
     config.playback.format = ma_format_s16;
     config.playback.channels = format.channelCount;
@@ -178,6 +184,7 @@ public:
 
   void schedule(std::uint64_t startFrame, PlaybackClock::Timestamp startTime) {
     currentFrame_.store(startFrame, std::memory_order_release);
+    sourceFrame_ = startFrame;
     startTime_ = startTime;
     scheduled_ = true;
   }
@@ -219,6 +226,14 @@ public:
     return underrunFrames_.load(std::memory_order_acquire);
   }
 
+  void setCorrectionRatio(double ratio) noexcept {
+    targetRatio_.store(ratio, std::memory_order_release);
+  }
+
+  [[nodiscard]] double correctionRatio() const noexcept {
+    return actualRatio_.load(std::memory_order_acquire);
+  }
+
 private:
   static void dataCallback(ma_device *device, void *output, const void *,
                            ma_uint32 frameCount) {
@@ -239,25 +254,65 @@ private:
       self->started_.store(true, std::memory_order_release);
     }
 
-    const auto currentFrame =
-        self->currentFrame_.load(std::memory_order_relaxed);
-    const auto copiedFrames =
-        self->jitterBuffer_.readFrames(currentFrame, samples);
-    const auto latestEndFrame = self->jitterBuffer_.latestEndFrame();
-    const auto knownFrames =
-        latestEndFrame > currentFrame
-            ? std::min<std::uint64_t>(frameCount, latestEndFrame - currentFrame)
-            : 0;
-    if (copiedFrames < knownFrames) {
-      self->underrunFrames_.fetch_add(knownFrames - copiedFrames,
-                                      std::memory_order_release);
+    const double target = self->targetRatio_.load(std::memory_order_acquire);
+    // Limit changes per callback to avoid abrupt pitch or phase jumps.
+    self->ratio_ += std::clamp(target - self->ratio_, -0.00002, 0.00002);
+    self->actualRatio_.store(self->ratio_, std::memory_order_release);
+    for (ma_uint32 outputStart = 0; outputStart < frameCount;) {
+      constexpr ma_uint32 chunkLimit = 256;
+      const auto chunkFrames = std::min(chunkLimit, frameCount - outputStart);
+      const auto currentFrame = self->sourceFrame_;
+      const auto sourceFrames = static_cast<std::size_t>(
+          std::floor(self->sourceFraction_ + chunkFrames * self->ratio_)) + 2U;
+      const auto copiedFrames = self->jitterBuffer_.readFrames(
+          currentFrame,
+          std::span<std::int16_t>(self->sourceSamples_.data(),
+                                  sourceFrames * self->channelCount_),
+          true);
+      for (ma_uint32 outputFrame = 0; outputFrame < chunkFrames; ++outputFrame) {
+        const double sourcePosition =
+            self->sourceFraction_ + outputFrame * self->ratio_;
+        const auto index = static_cast<std::size_t>(sourcePosition);
+        const double fraction = sourcePosition - static_cast<double>(index);
+        for (std::uint16_t channel = 0; channel < self->channelCount_; ++channel) {
+          const auto left =
+              self->sourceSamples_[index * self->channelCount_ + channel];
+          const auto right = self->sourceSamples_[(index + 1U) *
+                                                  self->channelCount_ + channel];
+          samples[(static_cast<std::size_t>(outputStart) + outputFrame) *
+                      self->channelCount_ + channel] =
+              static_cast<std::int16_t>(std::lround(
+                  (1.0 - fraction) * left + fraction * right));
+        }
+      }
+      const auto latestEndFrame = self->jitterBuffer_.latestEndFrame();
+      const auto knownFrames = latestEndFrame > currentFrame
+                                   ? std::min<std::uint64_t>(
+                                         sourceFrames, latestEndFrame - currentFrame)
+                                   : 0;
+      if (copiedFrames < knownFrames) {
+        self->underrunFrames_.fetch_add(knownFrames - copiedFrames,
+                                        std::memory_order_release);
+      }
+      const double nextPosition =
+          self->sourceFraction_ + chunkFrames * self->ratio_;
+      const auto advancedFrames = static_cast<std::uint64_t>(nextPosition);
+      self->sourceFrame_ += advancedFrames;
+      self->sourceFraction_ = nextPosition - static_cast<double>(advancedFrames);
+      outputStart += chunkFrames;
     }
-    self->currentFrame_.store(currentFrame + frameCount,
+    self->currentFrame_.store(self->sourceFrame_,
                               std::memory_order_release);
   }
 
   JitterBuffer &jitterBuffer_;
   std::uint16_t channelCount_{};
+  std::uint64_t sourceFrame_{};
+  double sourceFraction_{};
+  double ratio_{1.0};
+  std::vector<std::int16_t> sourceSamples_;
+  std::atomic<double> targetRatio_{1.0};
+  std::atomic<double> actualRatio_{1.0};
   std::atomic<std::uint64_t> currentFrame_{};
   PlaybackClock::Timestamp startTime_{};
   std::chrono::milliseconds configuredDelay_{};
@@ -290,6 +345,11 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   PacketReceiverWorker receiver(config_, jitterBuffer);
   const auto clockEstimate =
       ClockSyncClient::measure(hostAddress, config_.clockSyncPort);
+  DriftEstimator driftEstimator;
+  driftEstimator.addSample(clockEstimate.clientSampleTimestampNanoseconds,
+                           clockEstimate.hostMinusClientOffset.count());
+  GradualDriftCorrector driftCorrector;
+  auto latestClockEstimate = clockEstimate;
 
   const auto formatDeadline = PlaybackClock::now() + 5s;
   std::optional<JitterBufferFormat> format;
@@ -317,7 +377,8 @@ DesktopAudioClient::run(const std::string &hostAddress) {
     const auto clientThreshold = PlaybackClock::now() + config_.startupLead;
     const auto hostThreshold =
         clientThreshold.time_since_epoch().count() +
-        clockEstimate.hostMinusClientOffset.count() -
+        static_cast<std::int64_t>(driftEstimator.offsetNanosecondsAt(
+            clientThreshold.time_since_epoch().count())) -
         std::chrono::duration_cast<PlaybackClock::Duration>(
             config_.playbackDelay)
             .count();
@@ -337,7 +398,8 @@ DesktopAudioClient::run(const std::string &hostAddress) {
 
   const auto localPresentationNanoseconds =
       static_cast<std::int64_t>(startPacket->presentationTimestampNanoseconds) -
-      clockEstimate.hostMinusClientOffset.count() +
+      static_cast<std::int64_t>(driftEstimator.offsetNanosecondsAt(
+          PlaybackClock::now().time_since_epoch().count())) +
       std::chrono::duration_cast<PlaybackClock::Duration>(config_.playbackDelay)
           .count();
   if (localPresentationNanoseconds < 0) {
@@ -350,10 +412,41 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   player.start();
 
   std::uint64_t peakDepthFrames = 0;
+  double bufferErrorMilliseconds = 0.0;
+  auto nextClockMeasurement = PlaybackClock::now() + 5s;
   while (true) {
     std::this_thread::sleep_for(100ms);
     receiver.rethrowIfFailed();
+    if (PlaybackClock::now() >= nextClockMeasurement) {
+      try {
+        latestClockEstimate = ClockSyncClient::measure(
+            hostAddress, config_.clockSyncPort, 2s, 8);
+        driftEstimator.addSample(
+            latestClockEstimate.clientSampleTimestampNanoseconds,
+            latestClockEstimate.hostMinusClientOffset.count());
+      } catch (const std::runtime_error &) {
+        // Keep playing with the last valid estimate during a brief outage.
+      }
+      nextClockMeasurement = PlaybackClock::now() + 5s;
+    }
     const auto currentFrame = player.currentFrame();
+    if (player.started()) {
+      const auto clientNow = PlaybackClock::now().time_since_epoch().count();
+      const double hostNow = static_cast<double>(clientNow) +
+                             driftEstimator.offsetNanosecondsAt(clientNow);
+      const double desiredFrame =
+          static_cast<double>(startPacket->startFrame) +
+          (hostNow - static_cast<double>(startPacket->presentationTimestampNanoseconds) -
+           static_cast<double>(
+               std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   config_.playbackDelay).count())) *
+              static_cast<double>(format->sampleRate) / 1'000'000'000.0;
+      bufferErrorMilliseconds =
+          (desiredFrame - static_cast<double>(currentFrame)) * 1'000.0 /
+          static_cast<double>(format->sampleRate);
+      player.setCorrectionRatio(driftCorrector.correctionRatio(
+          driftEstimator.estimatedDriftPpm(), bufferErrorMilliseconds));
+    }
     peakDepthFrames =
         std::max(peakDepthFrames, jitterBuffer.depthFrames(currentFrame));
     const auto lastPacketTime = receiver.lastPacketTime();
@@ -378,8 +471,13 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   stats.peakBufferDepthMilliseconds =
       1'000.0 * static_cast<double>(peakDepthFrames) / format->sampleRate;
   stats.clockOffsetMilliseconds =
-      milliseconds(clockEstimate.hostMinusClientOffset);
-  stats.clockRoundTripMilliseconds = milliseconds(clockEstimate.roundTripTime);
+      driftEstimator.offsetNanosecondsAt(
+          PlaybackClock::now().time_since_epoch().count()) / 1'000'000.0;
+  stats.clockRoundTripMilliseconds =
+      milliseconds(latestClockEstimate.roundTripTime);
+  stats.estimatedDriftPpm = driftEstimator.estimatedDriftPpm();
+  stats.bufferErrorMilliseconds = bufferErrorMilliseconds;
+  stats.correctionRatio = player.correctionRatio();
   stats.estimatedPlaybackDelayMilliseconds =
       milliseconds(player.estimatedPlaybackDelay());
   stats.underrunFrames = player.underrunFrames();
