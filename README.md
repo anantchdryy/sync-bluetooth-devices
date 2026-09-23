@@ -207,4 +207,4 @@ and does not include unknown speaker, Bluetooth, or audio-driver output latency.
   miniaudio-backed playback, scheduling, host/client, and CLI
 - `tests` — packet serialization, jitter buffer, clock sync, clock conversion,
   file handling, and WAV metadata tests
-- `ios` is deferred until the iOS phase
+- `ios` — Phase 7 SwiftUI iPhone packet receiver; see [iPhone setup](ios/README.md)
