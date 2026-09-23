@@ -1,7 +1,9 @@
 #include "JitterBuffer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -23,8 +25,11 @@ std::vector<std::int16_t> decodePcm(const AudioPacket &packet) {
 
 bool JitterBuffer::push(const AudioPacket &packet) {
   if (packet.sampleFormat != AudioSampleFormat::PcmS16LittleEndian ||
-      packet.sampleRate == 0 || packet.channelCount == 0 ||
-      packet.frameCount == 0) {
+      packet.sampleRate < 8'000 || packet.sampleRate > 192'000 ||
+      packet.channelCount == 0 || packet.channelCount > 2 ||
+      packet.frameCount == 0 ||
+      packet.startFrame > std::numeric_limits<std::uint64_t>::max() -
+                              packet.frameCount) {
     throw std::invalid_argument(
         "Jitter buffer received an invalid audio format");
   }
@@ -42,6 +47,17 @@ bool JitterBuffer::push(const AudioPacket &packet) {
   buffered.samples = decodePcm(packet);
 
   std::scoped_lock lock(mutex_);
+  for (auto iterator = packets_.begin(); iterator != packets_.end();) {
+    if (iterator->second.startFrame + iterator->second.frameCount <=
+        latestReadFrame_)
+      iterator = packets_.erase(iterator);
+    else
+      break;
+  }
+  if (packet.startFrame + packet.frameCount <= latestReadFrame_) {
+    ++metrics_.latePackets;
+    return false;
+  }
   const JitterBufferFormat incomingFormat{packet.sampleRate,
                                           packet.channelCount};
   if (format_ && (format_->sampleRate != incomingFormat.sampleRate ||
@@ -52,10 +68,39 @@ bool JitterBuffer::push(const AudioPacket &packet) {
   const auto [iterator, inserted] =
       packets_.try_emplace(packet.startFrame, std::move(buffered));
   if (!inserted) {
+    ++metrics_.duplicatePackets;
     return false;
   }
+  const auto arrival = std::chrono::steady_clock::now();
+  if (lastPresentationNanoseconds_ != 0 &&
+      packet.presentationTimestampNanoseconds > lastPresentationNanoseconds_) {
+    const auto arrivalGap =
+        std::chrono::duration<double, std::milli>(arrival - lastArrival_).count();
+    const auto streamGap =
+        static_cast<double>(packet.presentationTimestampNanoseconds -
+                            lastPresentationNanoseconds_) / 1'000'000.0;
+    const auto deviation = std::abs(arrivalGap - streamGap);
+    metrics_.networkJitterMilliseconds +=
+        (deviation - metrics_.networkJitterMilliseconds) / 16.0;
+    const auto desired = std::clamp(150.0 + 4.0 * metrics_.networkJitterMilliseconds,
+                                    120.0, 350.0);
+    if (desired > metrics_.targetBufferMilliseconds) {
+      metrics_.targetBufferMilliseconds =
+          std::min(desired, metrics_.targetBufferMilliseconds + 10.0);
+    } else {
+      metrics_.targetBufferMilliseconds =
+          std::max(desired, metrics_.targetBufferMilliseconds - 0.25);
+    }
+  }
+  lastArrival_ = arrival;
+  lastPresentationNanoseconds_ = packet.presentationTimestampNanoseconds;
   latestEndFrame_ =
       std::max(latestEndFrame_, packet.startFrame + packet.frameCount);
+  latestEndFrameAtomic_.store(latestEndFrame_, std::memory_order_release);
+  if (packets_.size() > 1'024) {
+    packets_.erase(packets_.begin());
+    ++metrics_.overflowPackets;
+  }
   return true;
 }
 
@@ -63,10 +108,11 @@ std::uint32_t
 JitterBuffer::readFrames(std::uint64_t startFrame,
                          std::span<std::int16_t> interleavedOutput,
                          bool retainLookahead) {
-  std::scoped_lock lock(mutex_);
+  std::fill(interleavedOutput.begin(), interleavedOutput.end(),
+            std::int16_t{0});
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) return 0;
   if (!format_) {
-    std::fill(interleavedOutput.begin(), interleavedOutput.end(),
-              std::int16_t{0});
     return 0;
   }
   const auto channels = format_->channelCount;
@@ -74,17 +120,16 @@ JitterBuffer::readFrames(std::uint64_t startFrame,
     throw std::invalid_argument("Jitter buffer output is not frame aligned");
   }
 
-  std::fill(interleavedOutput.begin(), interleavedOutput.end(),
-            std::int16_t{0});
   const auto requestedFrames = interleavedOutput.size() / channels;
   const auto requestedEnd = startFrame + requestedFrames;
+  latestReadFrame_ = std::max(
+      latestReadFrame_, requestedEnd - (retainLookahead ? std::min<std::size_t>(2, requestedFrames) : 0));
   std::uint32_t copiedFrames = 0;
 
-  for (auto iterator = packets_.begin(); iterator != packets_.end();) {
+  for (auto iterator = packets_.begin(); iterator != packets_.end(); ++iterator) {
     const auto packetStart = iterator->second.startFrame;
     const auto packetEnd = packetStart + iterator->second.frameCount;
     if (packetEnd <= startFrame) {
-      iterator = packets_.erase(iterator);
       continue;
     }
     if (packetStart >= requestedEnd) {
@@ -105,12 +150,8 @@ JitterBuffer::readFrames(std::uint64_t startFrame,
       copiedFrames += static_cast<std::uint32_t>(frames);
     }
 
-    if (!retainLookahead && packetEnd <= requestedEnd) {
-      iterator = packets_.erase(iterator);
-    } else {
-      // A rate-adjusted reader may need the last sample again at a boundary.
-      ++iterator;
-    }
+    // The receiver thread removes expired packets on its next push. The
+    // callback never frees map nodes or waits for a mutex.
   }
   return copiedFrames;
 }
@@ -119,6 +160,7 @@ std::optional<BufferedPacketTiming> JitterBuffer::firstPacketAtOrAfter(
     std::uint64_t hostTimestampNanoseconds) const {
   std::scoped_lock lock(mutex_);
   for (const auto &[startFrame, packet] : packets_) {
+    if (packet.startFrame + packet.frameCount <= latestReadFrame_) continue;
     if (packet.presentationTimestampNanoseconds >= hostTimestampNanoseconds) {
       return BufferedPacketTiming{startFrame,
                                   packet.presentationTimestampNanoseconds};
@@ -133,8 +175,7 @@ std::optional<JitterBufferFormat> JitterBuffer::format() const {
 }
 
 std::uint64_t JitterBuffer::latestEndFrame() const {
-  std::scoped_lock lock(mutex_);
-  return latestEndFrame_;
+  return latestEndFrameAtomic_.load(std::memory_order_acquire);
 }
 
 std::uint64_t JitterBuffer::depthFrames(std::uint64_t playbackFrame) const {
@@ -144,5 +185,20 @@ std::uint64_t JitterBuffer::depthFrames(std::uint64_t playbackFrame) const {
 
 std::size_t JitterBuffer::packetCount() const {
   std::scoped_lock lock(mutex_);
-  return packets_.size();
+  return static_cast<std::size_t>(std::count_if(
+      packets_.begin(), packets_.end(), [this](const auto &entry) {
+        return entry.second.startFrame + entry.second.frameCount >
+               latestReadFrame_;
+      }));
+}
+
+JitterBufferMetrics JitterBuffer::metrics(std::uint64_t playbackFrame) const {
+  std::scoped_lock lock(mutex_);
+  auto result = metrics_;
+  if (format_ && latestEndFrame_ > playbackFrame) {
+    result.actualBufferMilliseconds =
+        1'000.0 * static_cast<double>(latestEndFrame_ - playbackFrame) /
+        static_cast<double>(format_->sampleRate);
+  }
+  return result;
 }

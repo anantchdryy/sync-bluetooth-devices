@@ -468,6 +468,15 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   stats.packetsReceived = receiver.packetsReceived();
   stats.packetsLost = receiver.packetsLost();
   stats.outOfOrderPackets = receiver.outOfOrderPackets();
+  const auto bufferMetrics = jitterBuffer.metrics(player.currentFrame());
+  stats.latePackets = bufferMetrics.latePackets;
+  stats.duplicatePackets = bufferMetrics.duplicatePackets;
+  stats.networkJitterMilliseconds = bufferMetrics.networkJitterMilliseconds;
+  stats.targetBufferMilliseconds = bufferMetrics.targetBufferMilliseconds;
+  const auto expectedPackets = stats.packetsReceived + stats.packetsLost;
+  stats.packetLossPercent = expectedPackets == 0 ? 0.0 :
+      100.0 * static_cast<double>(stats.packetsLost) /
+          static_cast<double>(expectedPackets);
   const auto finalDepthFrames = jitterBuffer.depthFrames(player.currentFrame());
   stats.finalBufferDepthMilliseconds =
       1'000.0 * static_cast<double>(finalDepthFrames) / format->sampleRate;
@@ -478,6 +487,11 @@ DesktopAudioClient::run(const std::string &hostAddress) {
           PlaybackClock::now().time_since_epoch().count()) / 1'000'000.0;
   stats.clockRoundTripMilliseconds =
       milliseconds(latestClockEstimate.roundTripTime);
+  stats.clockSamples = latestClockEstimate.samples;
+  stats.clockMeasurementQuality =
+      stats.clockSamples >= 6 && stats.clockRoundTripMilliseconds < 10.0
+          ? "Good"
+          : stats.clockSamples >= 3 ? "Fair" : "Poor";
   stats.estimatedDriftPpm = driftEstimator.estimatedDriftPpm();
   stats.bufferErrorMilliseconds = bufferErrorMilliseconds;
   stats.correctionRatio = player.correctionRatio();

@@ -3,6 +3,8 @@
 #include "AudioPacket.hpp"
 
 #include <cstddef>
+#include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -18,6 +20,15 @@ struct BufferedPacketTiming {
 struct JitterBufferFormat {
   std::uint32_t sampleRate{};
   std::uint16_t channelCount{};
+};
+
+struct JitterBufferMetrics {
+  double networkJitterMilliseconds{};
+  double targetBufferMilliseconds{180.0};
+  double actualBufferMilliseconds{};
+  std::uint64_t latePackets{};
+  std::uint64_t duplicatePackets{};
+  std::uint64_t overflowPackets{};
 };
 
 class JitterBuffer {
@@ -37,6 +48,7 @@ public:
   [[nodiscard]] std::uint64_t latestEndFrame() const;
   [[nodiscard]] std::uint64_t depthFrames(std::uint64_t playbackFrame) const;
   [[nodiscard]] std::size_t packetCount() const;
+  [[nodiscard]] JitterBufferMetrics metrics(std::uint64_t playbackFrame) const;
 
 private:
   struct BufferedPacket {
@@ -50,4 +62,9 @@ private:
   std::map<std::uint64_t, BufferedPacket> packets_;
   std::optional<JitterBufferFormat> format_;
   std::uint64_t latestEndFrame_{};
+  std::atomic<std::uint64_t> latestEndFrameAtomic_{0};
+  std::uint64_t latestReadFrame_{};
+  std::uint64_t lastPresentationNanoseconds_{};
+  std::chrono::steady_clock::time_point lastArrival_{};
+  JitterBufferMetrics metrics_{};
 };

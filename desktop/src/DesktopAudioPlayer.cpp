@@ -1,11 +1,16 @@
 #include "DesktopAudioPlayer.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
+#include <vector>
+#include <chrono>
 
 #include <miniaudio.h>
 
@@ -96,6 +101,21 @@ public:
       throw miniaudioError("Unable to rewind audio file", seekResult);
     }
 
+    bytesPerFrame_ = ma_get_bytes_per_frame(decoder_.outputFormat,
+                                           decoder_.outputChannels);
+    ringCapacityFrames_ = std::max<std::uint64_t>(metadata_.sampleRate, 4096);
+    ring_.resize(static_cast<std::size_t>(ringCapacityFrames_) * bytesPerFrame_);
+    readFrame_.store(0, std::memory_order_relaxed);
+    writtenFrame_.store(0, std::memory_order_relaxed);
+    decoderFinished_.store(false, std::memory_order_relaxed);
+    prefetchRunning_.store(true, std::memory_order_release);
+    prefetchThread_ = std::thread([this] { prefetch(); });
+    while (writtenFrame_.load(std::memory_order_acquire) <
+               std::min<std::uint64_t>(metadata_.sampleRate / 4, ringCapacityFrames_) &&
+           !decoderFinished_.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
     auto config = ma_device_config_init(ma_device_type_playback);
     config.playback.format = decoder_.outputFormat;
     config.playback.channels = decoder_.outputChannels;
@@ -106,6 +126,8 @@ public:
 
     auto result = ma_device_init(nullptr, &config, &device_);
     if (result != MA_SUCCESS) {
+      prefetchRunning_.store(false, std::memory_order_release);
+      prefetchThread_.join();
       throw miniaudioError("Unable to initialize the audio device", result);
     }
     deviceInitialized_ = true;
@@ -124,6 +146,8 @@ public:
       playbackClock_.reset();
       ma_device_uninit(&device_);
       deviceInitialized_ = false;
+      prefetchRunning_.store(false, std::memory_order_release);
+      prefetchThread_.join();
       throw miniaudioError("Unable to start the audio device", result);
     }
   }
@@ -135,6 +159,8 @@ public:
       ma_device_uninit(&device_);
       deviceInitialized_ = false;
     }
+    prefetchRunning_.store(false, std::memory_order_release);
+    if (prefetchThread_.joinable()) prefetchThread_.join();
   }
 
   [[nodiscard]] bool isPlaying() const noexcept {
@@ -190,6 +216,30 @@ public:
   }
 
 private:
+  void prefetch() noexcept {
+    while (prefetchRunning_.load(std::memory_order_acquire)) {
+      const auto written = writtenFrame_.load(std::memory_order_relaxed);
+      const auto read = readFrame_.load(std::memory_order_acquire);
+      const auto available = ringCapacityFrames_ - (written - read);
+      if (available == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      const auto contiguous = ringCapacityFrames_ - written % ringCapacityFrames_;
+      const auto request = std::min<std::uint64_t>({available, contiguous, 4096});
+      ma_uint64 framesRead = 0;
+      const auto result = ma_decoder_read_pcm_frames(
+          &decoder_, ring_.data() +
+                         static_cast<std::size_t>(written % ringCapacityFrames_) * bytesPerFrame_,
+          request, &framesRead);
+      writtenFrame_.store(written + framesRead, std::memory_order_release);
+      if (result != MA_SUCCESS || framesRead < request) {
+        decoderFinished_.store(true, std::memory_order_release);
+        return;
+      }
+    }
+  }
+
   void freezeTimeline(bool streamCompleted = false) noexcept {
     if (!timelineRunning_.load(std::memory_order_acquire) || !playbackClock_) {
       return;
@@ -232,8 +282,7 @@ private:
   static void dataCallback(ma_device *device, void *output, const void *,
                            ma_uint32 frameCount) {
     auto *self = static_cast<Impl *>(device->pUserData);
-    const auto bytesPerFrame = ma_get_bytes_per_frame(
-        self->decoder_.outputFormat, self->decoder_.outputChannels);
+    const auto bytesPerFrame = self->bytesPerFrame_;
     std::memset(output, 0,
                 static_cast<std::size_t>(frameCount) * bytesPerFrame);
 
@@ -250,17 +299,37 @@ private:
       return;
     }
 
-    ma_uint64 framesRead = 0;
-    const auto result = ma_decoder_read_pcm_frames(&self->decoder_, output,
-                                                   frameCount, &framesRead);
+    const auto read = self->readFrame_.load(std::memory_order_relaxed);
+    const auto written = self->writtenFrame_.load(std::memory_order_acquire);
+    const auto framesRead = std::min<std::uint64_t>(frameCount, written - read);
+    const auto first = std::min<std::uint64_t>(
+        framesRead, self->ringCapacityFrames_ - read % self->ringCapacityFrames_);
+    std::memcpy(output,
+                self->ring_.data() + static_cast<std::size_t>(read % self->ringCapacityFrames_) * bytesPerFrame,
+                static_cast<std::size_t>(first) * bytesPerFrame);
+    if (framesRead > first) {
+      std::memcpy(static_cast<std::byte *>(output) + first * bytesPerFrame,
+                  self->ring_.data(),
+                  static_cast<std::size_t>(framesRead - first) * bytesPerFrame);
+    }
+    self->readFrame_.store(read + framesRead, std::memory_order_release);
     self->submittedFrames_.fetch_add(framesRead, std::memory_order_release);
-    if (result != MA_SUCCESS || framesRead < frameCount) {
+    if (self->decoderFinished_.load(std::memory_order_acquire) &&
+        read + framesRead == written) {
       self->endReached_.store(true, std::memory_order_release);
     }
   }
 
   ma_decoder decoder_{};
   ma_device device_{};
+  std::vector<std::byte> ring_;
+  std::uint64_t ringCapacityFrames_{0};
+  ma_uint32 bytesPerFrame_{0};
+  std::atomic<std::uint64_t> readFrame_{0};
+  std::atomic<std::uint64_t> writtenFrame_{0};
+  std::atomic_bool prefetchRunning_{false};
+  std::atomic_bool decoderFinished_{false};
+  std::thread prefetchThread_;
   bool decoderInitialized_{false};
   bool deviceInitialized_{false};
   std::atomic_bool playing_{false};

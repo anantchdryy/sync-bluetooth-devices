@@ -18,10 +18,17 @@ struct DesktopAudioClientStats {
   std::uint64_t packetsReceived{};
   std::uint64_t packetsLost{};
   std::uint64_t outOfOrderPackets{};
+  std::uint64_t latePackets{};
+  std::uint64_t duplicatePackets{};
+  double networkJitterMilliseconds{};
+  double targetBufferMilliseconds{};
+  double packetLossPercent{};
   double finalBufferDepthMilliseconds{};
   double peakBufferDepthMilliseconds{};
   double clockOffsetMilliseconds{};
   double clockRoundTripMilliseconds{};
+  std::uint32_t clockSamples{};
+  std::string clockMeasurementQuality;
   double estimatedDriftPpm{};
   double bufferErrorMilliseconds{};
   double correctionRatio{1.0};

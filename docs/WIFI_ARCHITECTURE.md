@@ -73,9 +73,11 @@ measure physical speaker latency.
 The Phase 10 control socket reports disconnects but does not yet automatically
 rejoin a changed host session. Phase 11 defines the reconnection state machine.
 Host IP changes require rediscovery. Audio callbacks do not perform socket or
-file I/O, but the current desktop jitter-buffer read takes a mutex and the
-desktop host's local playback callback decodes WAV data. These are known
-real-time risks to address with prefilled rings and hardware profiling. A
+file I/O. The desktop jitter-buffer read uses a nonblocking mutex attempt and
+outputs silence if the receiver briefly owns the buffer; expired packets are
+freed on the receiver thread. The desktop host's local playback callback reads
+from a one-second SPSC ring filled by a decoder worker. Hardware profiling is
+still needed to determine callback underrun frequency. A
 six-second, 48 kHz mono WAV streamed to Windows loopback on the development
 machine sent 600 packets and 607,200 audio datagram bytes at 979.11 kbps
 excluding IP/UDP headers. The process used 0.094 CPU-seconds over 7.633

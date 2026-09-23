@@ -102,6 +102,28 @@ void testInterpolationLookahead() {
           "Packet should be discarded after the cursor passes it");
 }
 
+void testLateDuplicateAndBoundedHistory() {
+  JitterBuffer buffer;
+  const auto first = makePacket(0, 0, 1);
+  require(buffer.push(first), "First packet should be inserted");
+  require(!buffer.push(first), "Duplicate packet should be rejected");
+  std::array<std::int16_t, 8> output{};
+  static_cast<void>(buffer.readFrames(0, output));
+  require(!buffer.push(first), "Packet after playback must be late");
+  require(buffer.metrics(4).duplicatePackets == 1 &&
+              buffer.metrics(4).latePackets == 1,
+          "Duplicate and late diagnostics are incorrect");
+
+  for (std::uint32_t index = 1; index <= 1'026; ++index)
+    require(buffer.push(makePacket(static_cast<std::uint64_t>(index) * 4,
+                                   index, 1)),
+            "Future packet should be inserted");
+  require(buffer.packetCount() == 1'024,
+          "Unconsumed packet history must be bounded");
+  require(buffer.metrics(4).overflowPackets == 2,
+          "Overflow diagnostics are incorrect");
+}
+
 } // namespace
 
 int main() {
@@ -109,6 +131,7 @@ int main() {
     testReorderingGapAndRead();
     testFormatValidation();
     testInterpolationLookahead();
+    testLateDuplicateAndBoundedHistory();
     std::cout << "JitterBuffer tests passed\n";
     return 0;
   } catch (const std::exception &error) {

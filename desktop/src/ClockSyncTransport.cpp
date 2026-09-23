@@ -312,13 +312,18 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
     throw std::runtime_error(
         "Clock sync timed out; ensure the host and control port are reachable");
   }
-  const auto best =
-      std::min_element(samples.begin(), samples.end(),
-                       [](const ClockSyncEstimate &left,
-                          const ClockSyncEstimate &right) {
-                         return left.roundTripTime < right.roundTripTime;
-                       });
-  auto result = *best;
+  std::sort(samples.begin(), samples.end(),
+            [](const ClockSyncEstimate &left, const ClockSyncEstimate &right) {
+              return left.roundTripTime < right.roundTripTime;
+            });
+  const auto selectedCount = std::min<std::size_t>(3, samples.size());
+  const auto minimumRtt = samples.front().roundTripTime;
+  std::sort(samples.begin(), samples.begin() + selectedCount,
+            [](const ClockSyncEstimate &left, const ClockSyncEstimate &right) {
+              return left.hostMinusClientOffset < right.hostMinusClientOffset;
+            });
+  auto result = samples[selectedCount / 2];
+  result.roundTripTime = minimumRtt;
   result.samples = static_cast<std::uint32_t>(samples.size());
   return result;
 }

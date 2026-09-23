@@ -229,6 +229,14 @@ void runClient(const CommandLine &commandLine) {
             << "Packets received:          " << stats.packetsReceived << '\n'
             << "Packets lost:              " << stats.packetsLost << '\n'
             << "Out-of-order packets:      " << stats.outOfOrderPackets << '\n'
+            << "Late / duplicate packets:  " << stats.latePackets << " / "
+            << stats.duplicatePackets << '\n'
+            << "Network jitter:            " << stats.networkJitterMilliseconds
+            << " ms\n"
+            << "Target buffer:             " << stats.targetBufferMilliseconds
+            << " ms\n"
+            << "Packet loss rate:          " << stats.packetLossPercent
+            << "%\n"
             << "Final buffer depth:        "
             << stats.finalBufferDepthMilliseconds << " ms\n"
             << "Peak buffer depth:         "
@@ -237,6 +245,8 @@ void runClient(const CommandLine &commandLine) {
             << " ms\n"
             << "Clock-sync round-trip:     " << stats.clockRoundTripMilliseconds
             << " ms\n"
+            << "Clock samples / quality:   " << stats.clockSamples << " / "
+            << stats.clockMeasurementQuality << '\n'
             << "Estimated drift:           " << stats.estimatedDriftPpm
             << " ppm\n"
             << "Buffer error:              " << stats.bufferErrorMilliseconds
