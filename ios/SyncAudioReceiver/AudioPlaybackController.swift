@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Darwin
 
 struct PlaybackSnapshot {
     var state = "Idle"
@@ -8,6 +9,8 @@ struct PlaybackSnapshot {
     var concealedFrames = 0
     var outputLatencyMilliseconds: Double?
     var hardwareSampleRate: Double?
+    var estimatedSyncErrorMilliseconds: Double?
+    var presentationDelayMilliseconds = 20.0
 }
 
 /// Runs AVAudioEngine and its queue on one serial dispatch queue.
@@ -27,6 +30,10 @@ final class AudioPlaybackController {
     private var active = false
     private var primed = false
     private var lastPublish = 0.0
+    private var clockEstimate: ClockEstimate?
+    private var scheduledHostTime: UInt64?
+    private var startClockOffsetNanoseconds: Double?
+    private var lastLog = 0.0
 
     func start() {
         queue.async { [weak self] in
@@ -59,11 +66,20 @@ final class AudioPlaybackController {
         queue.async { [weak self] in
             guard let self, self.active, packet.channels <= 2,
                   (8_000...192_000).contains(packet.sampleRate) else { return }
-            if let sessionID = self.packets.sessionID, sessionID != packet.sessionID {
+            if let sessionID = self.packets.sessionID,
+               (sessionID != packet.sessionID || self.packets.sampleRate != packet.sampleRate ||
+                self.packets.channels != packet.channels) {
                 self.resetStream()
             }
             self.packets.insert(packet)
             self.pump()
+        }
+    }
+
+    func updateClock(_ estimate: ClockEstimate?) {
+        queue.async { [weak self] in
+            self?.clockEstimate = estimate
+            self?.pump()
         }
     }
 
@@ -93,13 +109,31 @@ final class AudioPlaybackController {
 
     private func pump() {
         guard active, let sampleRate = packets.sampleRate else { return }
+        guard let clockEstimate else {
+            snapshot.state = "Waiting for host clock"
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastPublish >= 0.25 {
+                lastPublish = now
+                publish()
+            }
+            return
+        }
         if format == nil {
             guard let first = packets.packets.values.first, configure(format: first) else { return }
         }
         guard let format else { return }
         let prebufferFrames = Int(Double(sampleRate) * 0.18)
         let targetFrames = Int(Double(sampleRate) * 0.25)
+        if !primed && queuedFrames == 0 {
+            let minimumTimestamp = PlaybackTiming.minimumPacketTimestamp(
+                estimate: clockEstimate,
+                outputLatencyNanoseconds: (snapshot.outputLatencyMilliseconds ?? 0) * 1_000_000,
+                nowNanoseconds: DispatchTime.now().uptimeNanoseconds)
+            packets.discard(beforeHostNanoseconds: minimumTimestamp)
+        }
         if !primed && Int(packets.bufferedFrames) < prebufferFrames { return }
+
+        let firstPacket = packets.firstPacket
 
         while queuedFrames < targetFrames, let item = packets.popNext() {
             let buffer: AVAudioPCMBuffer?
@@ -121,22 +155,57 @@ final class AudioPlaybackController {
             }
         }
         if !primed && queuedFrames >= prebufferFrames {
-            player.play()
+            guard let firstPacket else { return }
+            let delay = PlaybackTiming.startDelayNanoseconds(
+                packet: firstPacket, estimate: clockEstimate,
+                outputLatencyNanoseconds: (snapshot.outputLatencyMilliseconds ?? 0) * 1_000_000,
+                nowNanoseconds: DispatchTime.now().uptimeNanoseconds)
+            guard delay > 0 else {
+                resetStream()
+                return
+            }
+            let hostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: delay / 1_000_000_000)
+            scheduledHostTime = hostTime
+            startClockOffsetNanoseconds = clockEstimate.offsetNanoseconds
+            player.play(at: AVAudioTime(hostTime: hostTime))
             primed = true
             snapshot.state = "Playing"
         }
         if primed && queuedFrames == 0 {
             snapshot.underruns += 1
-            snapshot.state = "Buffering"
-            player.stop()
-            primed = false
-            packets = PacketPlaybackQueue()
+            resetStream()
         }
         snapshot.queuedMilliseconds = Double(queuedFrames) * 1_000 / Double(sampleRate)
+        updateSyncError(sampleRate: sampleRate)
+        let now = ProcessInfo.processInfo.systemUptime
+        if primed && now - lastLog >= 1 {
+            lastLog = now
+            print(String(format: "sync offset=%.3fms rtt=%.3fms buffer=%.1fms estimatedError=%@",
+                         clockEstimate.offsetMilliseconds, clockEstimate.roundTripMilliseconds,
+                         snapshot.queuedMilliseconds,
+                         snapshot.estimatedSyncErrorMilliseconds.map { String(format: "%.3fms", $0) } ?? "unavailable"))
+        }
         if ProcessInfo.processInfo.systemUptime - lastPublish >= 0.25 {
             lastPublish = ProcessInfo.processInfo.systemUptime
             publish()
         }
+    }
+
+    private func updateSyncError(sampleRate: UInt32) {
+        guard let scheduledHostTime, let startClockOffsetNanoseconds,
+              let clockEstimate, let nodeTime = player.lastRenderTime,
+              let playerTime = player.playerTime(forNodeTime: nodeTime),
+              playerTime.sampleTime >= 0 else {
+            snapshot.estimatedSyncErrorMilliseconds = nil
+            return
+        }
+        let tickDifference = nodeTime.hostTime >= scheduledHostTime
+            ? Double(AVAudioTime.seconds(forHostTime: nodeTime.hostTime - scheduledHostTime))
+            : -Double(AVAudioTime.seconds(forHostTime: scheduledHostTime - nodeTime.hostTime))
+        let sampleSeconds = Double(playerTime.sampleTime) / Double(sampleRate)
+        snapshot.estimatedSyncErrorMilliseconds =
+            (tickDifference - sampleSeconds) * 1_000
+            + (clockEstimate.offsetNanoseconds - startClockOffsetNanoseconds) / 1_000_000
     }
 
     private func observeInterruptions() {
@@ -158,6 +227,8 @@ final class AudioPlaybackController {
                     self.packets = PacketPlaybackQueue()
                     self.queuedFrames = 0
                     self.primed = false
+                    self.scheduledHostTime = nil
+                    self.startClockOffsetNanoseconds = nil
                     self.snapshot.state = "Waiting for PCM"
                 }
                 self.publish()
@@ -171,6 +242,9 @@ final class AudioPlaybackController {
         queuedFrames = 0
         primed = false
         packets = PacketPlaybackQueue()
+        scheduledHostTime = nil
+        startClockOffsetNanoseconds = nil
+        snapshot.estimatedSyncErrorMilliseconds = nil
         snapshot.state = "Buffering"
     }
 
@@ -183,6 +257,9 @@ final class AudioPlaybackController {
         player.stop()
         engine.stop()
         packets = PacketPlaybackQueue()
+        clockEstimate = nil
+        scheduledHostTime = nil
+        startClockOffsetNanoseconds = nil
         queuedFrames = 0
         primed = false
         format = nil

@@ -6,12 +6,16 @@ import Network
 final class ReceiverViewModel: ObservableObject {
     @Published var hostIP = ""
     @Published var portText = "40100"
+    @Published var controlPortText = "40101"
     @Published private(set) var snapshot = ReceiverSnapshot()
     @Published private(set) var playback = PlaybackSnapshot()
+    @Published private(set) var clockEstimate: ClockEstimate?
+    @Published private(set) var clockStatus = "Idle"
     @Published private(set) var isListening = false
 
     private let receiver = UDPStreamReceiver()
     private let audio = AudioPlaybackController()
+    private let clock = HostClockSync()
 
     init() {
         receiver.onSnapshot = { [weak self] snapshot in
@@ -27,6 +31,17 @@ final class ReceiverViewModel: ObservableObject {
                 self?.playback = playback
             }
         }
+        clock.onEstimate = { [weak self] estimate in
+            self?.audio.updateClock(estimate)
+            DispatchQueue.main.async { [weak self] in
+                self?.clockEstimate = estimate
+            }
+        }
+        clock.onStatus = { [weak self] status in
+            DispatchQueue.main.async { [weak self] in
+                self?.clockStatus = status
+            }
+        }
     }
 
     func start() {
@@ -39,14 +54,21 @@ final class ReceiverViewModel: ObservableObject {
             snapshot.status = "Enter a UDP port from 1 to 65535"
             return
         }
+        guard let controlPort = UInt16(controlPortText), controlPort > 0,
+              controlPort != port else {
+            snapshot.status = "Enter a different clock UDP port from 1 to 65535"
+            return
+        }
         isListening = true
         audio.start()
         receiver.start(host: address, port: port)
+        clock.start(host: address, port: controlPort)
     }
 
     func stop() {
         isListening = false
         receiver.stop()
         audio.stop()
+        clock.stop()
     }
 }

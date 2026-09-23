@@ -16,6 +16,9 @@ struct ContentView: View {
                     TextField("Audio UDP port", text: $model.portText)
                         .keyboardType(.numberPad)
                         .disabled(model.isListening)
+                    TextField("Clock UDP port", text: $model.controlPortText)
+                        .keyboardType(.numberPad)
+                        .disabled(model.isListening)
                     Button(model.isListening ? "Stop Listening" : "Start Listening") {
                         model.isListening ? model.stop() : model.start()
                     }
@@ -54,6 +57,27 @@ struct ContentView: View {
                     LabeledContent("Device sample rate", value: model.playback.hardwareSampleRate.map {
                         String(format: "%.0f Hz", $0)
                     } ?? "—")
+                }
+
+                Section("Synchronization") {
+                    LabeledContent("Clock", value: model.clockStatus)
+                    LabeledContent("Host offset", value: model.clockEstimate.map {
+                        String(format: "%.3f ms", $0.offsetMilliseconds)
+                    } ?? "—")
+                    LabeledContent("RTT", value: model.clockEstimate.map {
+                        String(format: "%.3f ms", $0.roundTripMilliseconds)
+                    } ?? "—")
+                    LabeledContent("Clock samples", value: model.clockEstimate.map {
+                        String($0.sampleCount)
+                    } ?? "0")
+                    LabeledContent("Buffer", value: String(format: "%.1f ms", model.playback.queuedMilliseconds))
+                    LabeledContent("Presentation delay", value: String(format: "%.1f ms", model.playback.presentationDelayMilliseconds))
+                    LabeledContent("Estimated sync error", value: model.playback.estimatedSyncErrorMilliseconds.map {
+                        String(format: "%+.3f ms", $0)
+                    } ?? "—")
+                    Text("Sync error is estimated from engine render timing and the audio session's output latency. It is not a measured acoustic difference.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("SyncAudio Receiver")

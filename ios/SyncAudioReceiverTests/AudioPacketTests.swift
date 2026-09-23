@@ -61,7 +61,44 @@ final class AudioPacketTests: XCTestCase {
         XCTAssertEqual(buffer.floatChannelData![0][1], 2.0 / 32_768, accuracy: 0.000001)
     }
 
-    private func makeDatagram(sequence: UInt32, startFrame: UInt64 = 0) -> Data {
+    func testClockSyncWireAndTiming() {
+        let sent: UInt64 = 1_000_000_000
+        let received: UInt64 = 1_011_000_000
+        var reply = [UInt8](ClockSyncWire.request(id: 7, sentAt: sent))
+        reply[5] = 2
+        write(1_025_000_000, into: &reply, at: 24)
+        write(1_026_000_000, into: &reply, at: 32)
+        let estimate = ClockSyncWire.response(Data(reply), id: 7, sentAt: sent,
+                                              receivedAt: received)!
+        XCTAssertEqual(estimate.offsetMilliseconds, 20, accuracy: 0.0001)
+        XCTAssertEqual(estimate.roundTripMilliseconds, 10, accuracy: 0.0001)
+        XCTAssertNil(ClockSyncWire.response(Data(reply), id: 8, sentAt: sent,
+                                            receivedAt: received))
+
+        let packet = AudioPacket(datagram: makeDatagram(sequence: 0,
+                                                        presentationTime: 1_500_000_000))!
+        XCTAssertEqual(PlaybackTiming.startDelayNanoseconds(packet: packet,
+                          estimate: estimate, outputLatencyNanoseconds: 10_000_000,
+                          nowNanoseconds: sent), 490_000_000, accuracy: 1)
+    }
+
+    func testClockMathWithFasterAndSlowerHost() {
+        for offset: Int64 in [-30_000_000, 30_000_000] {
+            let sent: UInt64 = 2_000_000_000
+            let received = sent + 12_000_000
+            var reply = [UInt8](ClockSyncWire.request(id: 1, sentAt: sent))
+            reply[5] = 2
+            write(UInt64(Int64(sent + 5_000_000) + offset), into: &reply, at: 24)
+            write(UInt64(Int64(sent + 7_000_000) + offset), into: &reply, at: 32)
+            let estimate = ClockSyncWire.response(Data(reply), id: 1, sentAt: sent,
+                                                  receivedAt: received)!
+            XCTAssertEqual(estimate.offsetNanoseconds, Double(offset), accuracy: 1)
+            XCTAssertEqual(estimate.roundTripMilliseconds, 10, accuracy: 0.0001)
+        }
+    }
+
+    private func makeDatagram(sequence: UInt32, startFrame: UInt64 = 0,
+                              presentationTime: UInt64 = 0) -> Data {
         var bytes = [UInt8](repeating: 0, count: 52)
         bytes[0] = 0x53
         bytes[1] = 0x41
@@ -79,6 +116,7 @@ final class AudioPacketTests: XCTestCase {
         bytes[25] = 1 // mono
         bytes[26] = 1 // signed 16-bit little-endian PCM
         bytes[35] = UInt8(startFrame & 0xff)
+        write(presentationTime, into: &bytes, at: 36)
         bytes[45] = 4 // payload bytes
         bytes[47] = 2 // frames
         bytes[48] = 1
@@ -86,5 +124,11 @@ final class AudioPacketTests: XCTestCase {
         bytes[50] = 2
         bytes[51] = 0
         return Data(bytes)
+    }
+
+    private func write(_ value: UInt64, into bytes: inout [UInt8], at offset: Int) {
+        for index in 0..<8 {
+            bytes[offset + index] = UInt8(truncatingIfNeeded: value >> (56 - index * 8))
+        }
     }
 }
