@@ -1,6 +1,8 @@
 /build/
 /build-core/
 /out/
+/desktop/gui/bin/
+/desktop/gui/obj/
 /.vs/
 /.vscode/
 CMakeUserPresets.json

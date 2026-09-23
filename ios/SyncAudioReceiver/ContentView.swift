@@ -1,144 +1,235 @@
+import AVKit
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = ReceiverViewModel()
+    @AppStorage("TandemAudio.onboardingComplete") private var onboardingComplete = false
+    @AppStorage("TandemAudio.developerMode") private var developerMode = false
 
     var body: some View {
+        if onboardingComplete {
+            TabView {
+                home.tabItem { Label("Home", systemImage: "house") }
+                room.tabItem { Label("Room", systemImage: "music.note.house") }
+                devices.tabItem { Label("Device", systemImage: "hifispeaker") }
+                settings.tabItem { Label("Settings", systemImage: "gearshape") }
+            }
+            .tint(.mint)
+        } else {
+            onboarding
+        }
+    }
+
+    private var onboarding: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Image(systemName: "waveform.path")
+                .font(.system(size: 58))
+                .foregroundStyle(.mint)
+            Text("Play together")
+                .font(.largeTitle.bold())
+            Text("Turn nearby phones and computers into speakers for the same music.")
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Connect devices to the same Wi-Fi.", systemImage: "wifi")
+                Label("Create a room on your computer.", systemImage: "plus.circle")
+                Label("Join the room here and choose your speaker.", systemImage: "hifispeaker")
+            }
+            .padding(.vertical, 12)
+            Spacer()
+            Button("Find rooms") { onboardingComplete = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(30)
+    }
+
+    private var home: some View {
         NavigationStack {
             Form {
-                Section("Nearby hosts") {
-                    LabeledContent("Discovery", value: model.discoveryStatus)
+                Section {
                     if model.discoveredHosts.isEmpty {
-                        Text("No Tandem Audio host found yet")
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No nearby rooms yet").font(.headline)
+                            Text("Open Tandem Audio on a computer and create a room. Keep both devices on the same Wi-Fi.")
+                                .foregroundStyle(.secondary)
+                            Text(model.discoveryStatus)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        ForEach(model.discoveredHosts) { host in
+                            Button {
+                                model.connect(to: host)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "music.note.house")
+                                        .foregroundStyle(.mint)
+                                    Text(host.name)
+                                    Spacer()
+                                    Text("Join").foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(model.isListening)
+                        }
+                    }
+                } header: { Text("Nearby rooms") }
+
+                if model.isListening {
+                    Section("Current room") {
+                        LabeledContent("Room", value: model.roomName.isEmpty ? "Joining…" : model.roomName)
+                        LabeledContent("Status", value: model.userStatus)
+                        Button("Leave room", role: .destructive) { model.stop() }
+                    }
+                }
+                Section {
+                    Text("If rooms do not appear, allow Local Network access in iPhone Settings and check that the computer and iPhone are on the same network.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Tandem Audio")
+        }
+    }
+
+    private var room: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(model.roomName.isEmpty ? "No room open" : model.roomName)
+                            .font(.title2.bold())
+                        Label(model.userStatus, systemImage: model.connectionState == .playing
+                              ? "waveform" : "circle.dotted")
+                            .foregroundColor(model.connectionState == .playing ? .mint : .gray)
+                    }
+                    .padding(.vertical, 8)
+                    if model.isListening {
+                        LabeledContent("Host", value: model.hostPlaybackState.capitalized)
+                        Button("Leave room", role: .destructive) { model.stop() }
+                    } else {
+                        Text("Choose a nearby room on Home to start listening.")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(model.discoveredHosts) { host in
-                        Button("Join \(host.name)") { model.connect(to: host) }
-                            .disabled(model.isListening)
+                }
+                if model.isListening {
+                    Section("Audio output") {
+                        LabeledContent("Playing through", value: model.playback.outputRouteType)
+                        HStack {
+                            Text("Choose output")
+                            Spacer()
+                            AudioRoutePicker()
+                                .frame(width: 44, height: 44)
+                        }
+                        Text("Changing speakers may briefly rebuffer audio while Tandem Audio recalibrates the route.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
-                Section("Desktop host") {
-                    TextField("IPv4 address, e.g. 192.168.1.10", text: $model.hostIP)
-                        .keyboardType(.numbersAndPunctuation)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .disabled(model.isListening)
-                    TextField("Audio UDP port", text: $model.portText)
-                        .keyboardType(.numberPad)
-                        .disabled(model.isListening)
-                    TextField("Clock UDP port", text: $model.controlPortText)
-                        .keyboardType(.numberPad)
-                        .disabled(model.isListening)
-                    TextField("Session TCP port", text: $model.sessionPortText)
-                        .keyboardType(.numberPad)
-                        .disabled(model.isListening)
-                    Button(model.isListening ? "Stop Listening" : "Start Listening") {
-                        model.isListening ? model.stop() : model.start()
-                    }
-                }
+            }
+            .navigationTitle("Room")
+        }
+    }
 
-                Section("Connection") {
-                    if !model.roomName.isEmpty {
-                        LabeledContent("Room", value: model.roomName)
-                        LabeledContent("Host", value: model.hostPlaybackState)
+    private var devices: some View {
+        NavigationStack {
+            Form {
+                Section("This iPhone") {
+                    LabeledContent("Connection", value: model.userStatus)
+                    LabeledContent("Quality", value: model.connectionQuality)
+                    LabeledContent("Speaker", value: model.playback.outputRouteType)
+                    if model.playback.state == "Output changed; buffering" {
+                        Label("Your audio output changed. Recalibrating…", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    LabeledContent("Phase", value: model.connectionState.rawValue)
-                    LabeledContent("State", value: model.snapshot.status)
-                    LabeledContent("Control", value: model.controlStatus)
-                    Text("Join a nearby host, or enter its address for debugging. Keep this app open while streaming.")
-                        .font(.footnote)
+                }
+                Section {
+                    Text("Each device synchronizes with the room host independently. Other members are visible in the desktop app.")
                         .foregroundStyle(.secondary)
                 }
+            }
+            .navigationTitle("Device")
+        }
+    }
 
-                Section("Packets") {
-                    LabeledContent("Sequence", value: model.snapshot.lastSequenceNumber.map { String($0) } ?? "—")
-                    LabeledContent("Packets/sec", value: String(model.snapshot.packetsPerSecond))
-                    LabeledContent("Received", value: String(model.snapshot.packetsReceived))
-                    LabeledContent("Estimated loss", value: String(model.snapshot.packetsLost))
-                    LabeledContent("Packet loss", value: String(format: "%.2f%%", model.snapshot.packetLossPercent))
-                    LabeledContent("Network jitter", value: String(format: "%.1f ms", model.snapshot.networkJitterMilliseconds))
-                }
-
-                Section("Stream") {
-                    LabeledContent("Sample rate", value: model.snapshot.sampleRate.map { "\($0) Hz" } ?? "—")
-                    LabeledContent("Channels", value: model.snapshot.channels.map { String($0) } ?? "—")
-                    LabeledContent("Receive buffer", value: String(format: "%.1f ms", model.snapshot.bufferDepthMilliseconds))
-                    LabeledContent("PCM format", value: model.snapshot.sampleRate == nil ? "—" :
-                        (model.snapshot.audioFormatSupported ? "16-bit supported" : "Unavailable"))
-                }
-
-                Section("Playback") {
-                    LabeledContent("State", value: model.playback.state)
-                    LabeledContent("Queued audio", value: String(format: "%.1f ms", model.playback.queuedMilliseconds))
-                    LabeledContent("Target buffer", value: String(format: "%.1f ms", model.playback.targetBufferMilliseconds))
-                    LabeledContent("Late packets", value: String(model.playback.latePackets))
-                    LabeledContent("Late rate", value: String(format: "%.2f%%", model.playback.latePacketRate * 100))
-                    LabeledContent("Underruns", value: String(model.playback.underruns))
-                    LabeledContent("Concealed frames", value: String(model.playback.concealedFrames))
-                    LabeledContent("Output pipeline", value: model.playback.outputLatencyMilliseconds.map {
-                        String(format: "%.1f ms", $0)
-                    } ?? "—")
-                    LabeledContent("Device sample rate", value: model.playback.hardwareSampleRate.map {
-                        String(format: "%.0f Hz", $0)
-                    } ?? "—")
-                    LabeledContent("Output route", value: model.playback.outputRouteType)
-                    LabeledContent("Calibration", value: model.playback.calibrationConfidence)
-                    LabeledContent("Effective output delay", value:
-                        model.playback.effectiveOutputLatencyMilliseconds.map {
-                            String(format: "%+.1f ms", $0)
-                        } ?? "—")
-                }
-
-                Section("Manual output calibration") {
-                    Slider(value: $model.calibrationAdjustmentMs,
-                           in: -1_000...1_000, step: 1) { editing in
-                        if !editing { model.applyCalibration() }
+    private var settings: some View {
+        NavigationStack {
+            Form {
+                Section("Audio output") {
+                    LabeledContent("Current route", value: model.playback.outputRouteType)
+                    HStack {
+                        Text("Choose speaker")
+                        Spacer()
+                        AudioRoutePicker().frame(width: 44, height: 44)
                     }
-                    LabeledContent("Adjustment", value:
-                        String(format: "%+.0f ms", model.calibrationAdjustmentMs))
-                    Text("Use the same short click on both devices and adjust until they sound aligned. This value is saved for the current output route.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
-
-                Section("Synchronization") {
-                    LabeledContent("Clock", value: model.clockStatus)
-                    LabeledContent("Host offset", value: model.clockEstimate.map {
-                        String(format: "%.3f ms", $0.offsetMilliseconds)
-                    } ?? "—")
-                    LabeledContent("RTT", value: model.clockEstimate.map {
-                        String(format: "%.3f ms", $0.roundTripMilliseconds)
-                    } ?? "—")
-                    LabeledContent("Clock samples", value: model.clockEstimate.map {
-                        String($0.sampleCount)
-                    } ?? "0")
-                    LabeledContent("Clock quality", value: model.clockEstimate?.measurementQuality ?? "—")
-                    LabeledContent("Estimated drift", value: model.clockEstimate?.estimatedDriftPpm.map {
-                        String(format: "%+.1f ppm", $0)
-                    } ?? "—")
-                    LabeledContent("Buffer", value: String(format: "%.1f ms", model.playback.queuedMilliseconds))
-                    LabeledContent("Presentation delay", value: String(format: "%.1f ms", model.playback.presentationDelayMilliseconds))
-                    LabeledContent("Estimated sync error", value: model.playback.estimatedSyncErrorMilliseconds.map {
-                        String(format: "%+.3f ms", $0)
-                    } ?? "—")
-                    Text("Sync error is estimated from engine render timing and the audio session's output latency. It is not a measured acoustic difference.")
-                        .font(.footnote)
+                Section("Calibration") {
+                    LabeledContent("Status", value: model.playback.calibrationConfidence)
+                    Text("Tandem Audio uses the iPhone's output timing estimate. For best alignment, compare a short click from both speakers.")
                         .foregroundStyle(.secondary)
+                    DisclosureGroup("Advanced manual adjustment") {
+                        Slider(value: $model.calibrationAdjustmentMs,
+                               in: -1_000...1_000, step: 1) { editing in
+                            if !editing { model.applyCalibration() }
+                        }
+                        LabeledContent("Adjustment", value:
+                            String(format: "%+.0f ms", model.calibrationAdjustmentMs))
+                    }
                 }
                 Section("Diagnostics") {
+                    Toggle("Developer diagnostics", isOn: $developerMode)
                     Button("Prepare diagnostics export") { model.exportDiagnostics() }
                     if let url = model.diagnosticsURL {
                         ShareLink("Share diagnostics JSON", item: url)
                     }
                 }
+                if developerMode {
+                    developerDiagnostics
+                }
             }
-            .navigationTitle("SyncAudio Receiver")
+            .navigationTitle("Settings")
         }
-        .onChange(of: scenePhase) { phase in
-            if phase == .background && model.isListening {
-                model.stop()
+    }
+
+    private var developerDiagnostics: some View {
+        Group {
+            Section("Manual connection") {
+                TextField("Host IPv4 address", text: $model.hostIP)
+                    .keyboardType(.numbersAndPunctuation)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("Audio UDP port", text: $model.portText).keyboardType(.numberPad)
+                TextField("Clock UDP port", text: $model.controlPortText).keyboardType(.numberPad)
+                TextField("Session TCP port", text: $model.sessionPortText).keyboardType(.numberPad)
+                Button("Connect to host") { model.start() }.disabled(model.isListening)
+            }
+            Section("Network and playback") {
+                LabeledContent("Control", value: model.controlStatus)
+                LabeledContent("Packets/sec", value: String(model.snapshot.packetsPerSecond))
+                LabeledContent("Packet loss", value: String(format: "%.2f%%", model.snapshot.packetLossPercent))
+                LabeledContent("RTT", value: model.clockEstimate.map {
+                    String(format: "%.3f ms", $0.roundTripMilliseconds)
+                } ?? "Unavailable")
+                LabeledContent("Host offset", value: model.clockEstimate.map {
+                    String(format: "%.3f ms", $0.offsetMilliseconds)
+                } ?? "Unavailable")
+                LabeledContent("Buffer", value: String(format: "%.1f ms", model.playback.queuedMilliseconds))
+                LabeledContent("Underruns", value: String(model.playback.underruns))
+                LabeledContent("Sync estimate", value: model.playback.estimatedSyncErrorMilliseconds.map {
+                    String(format: "%+.3f ms", $0)
+                } ?? "Unavailable")
+                Text("The sync estimate is based on render timing and system output latency. It is not an acoustic measurement.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         }
     }
+}
+
+private struct AudioRoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.activeTintColor = .systemMint
+        picker.tintColor = .systemMint
+        return picker
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) { }
 }

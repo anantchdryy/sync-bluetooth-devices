@@ -20,6 +20,7 @@ public partial class MainWindow : Window
         "TandemAudio", "Logs");
     private readonly RoomDiscovery discovery = new();
     private Process? roomProcess;
+    private readonly object logLock = new();
     private bool isHost;
     private string? trackPath;
     private int trackSampleRate;
@@ -71,26 +72,30 @@ public partial class MainWindow : Window
         }
         try { trackSampleRate = WavHeader.ReadSampleRate(trackPath); }
         catch (Exception error) { ShowError($"Cannot read the WAV file: {error.Message}"); return; }
-        var info = NewEngineProcess();
-        info.ArgumentList.Add("host");
-        info.ArgumentList.Add(trackPath);
-        info.ArgumentList.Add("--room-name");
-        info.ArgumentList.Add(name);
-        info.ArgumentList.Add("--output-latency-ms");
-        info.ArgumentList.Add(latency.ToString(CultureInfo.InvariantCulture));
-        StartRoomProcess(info, name, Path.GetFileName(trackPath), host: true);
+        try {
+            var info = NewEngineProcess();
+            info.ArgumentList.Add("host");
+            info.ArgumentList.Add(trackPath);
+            info.ArgumentList.Add("--room-name");
+            info.ArgumentList.Add(name);
+            info.ArgumentList.Add("--output-latency-ms");
+            info.ArgumentList.Add(latency.ToString(CultureInfo.InvariantCulture));
+            StartRoomProcess(info, name, Path.GetFileName(trackPath), host: true);
+        } catch (Exception error) { ShowError($"Cannot create room: {error.Message}"); }
     }
 
     private void JoinRoom_Click(object sender, RoutedEventArgs e)
     {
         if (roomProcess is { HasExited: false }) { ShowError("Close the current room first."); return; }
         if (RoomsList.SelectedItem is not DiscoveredRoom room) { ShowError("Choose a nearby room first."); return; }
-        var info = NewEngineProcess();
-        info.ArgumentList.Add("room-client");
-        info.ArgumentList.Add(room.Address);
-        info.ArgumentList.Add("--session-port");
-        info.ArgumentList.Add(room.Port.ToString(CultureInfo.InvariantCulture));
-        StartRoomProcess(info, room.DisplayName, "Listening to host", host: false);
+        try {
+            var info = NewEngineProcess();
+            info.ArgumentList.Add("room-client");
+            info.ArgumentList.Add(room.Address);
+            info.ArgumentList.Add("--session-port");
+            info.ArgumentList.Add(room.Port.ToString(CultureInfo.InvariantCulture));
+            StartRoomProcess(info, room.DisplayName, "Listening to host", host: false);
+        } catch (Exception error) { ShowError($"Cannot join room: {error.Message}"); }
     }
 
     private ProcessStartInfo NewEngineProcess()
@@ -109,9 +114,13 @@ public partial class MainWindow : Window
         try {
             var process = new Process { StartInfo = info, EnableRaisingEvents = true };
             var logPath = Path.Combine(diagnostics, $"room-{DateTime.UtcNow:yyyyMMdd-HHmmss}.log");
-            process.OutputDataReceived += (_, args) => { if (args.Data is not null) File.AppendAllText(logPath, args.Data + Environment.NewLine); };
-            process.ErrorDataReceived += (_, args) => { if (args.Data is not null) File.AppendAllText(logPath, args.Data + Environment.NewLine); };
-            process.Exited += (_, _) => Dispatcher.Invoke(() => {
+            process.OutputDataReceived += (_, args) => {
+                if (args.Data is not null) lock (logLock) File.AppendAllText(logPath, args.Data + Environment.NewLine);
+            };
+            process.ErrorDataReceived += (_, args) => {
+                if (args.Data is not null) lock (logLock) File.AppendAllText(logPath, args.Data + Environment.NewLine);
+            };
+            process.Exited += (_, _) => Dispatcher.BeginInvoke(() => {
                 RoomStatus.Text = process.ExitCode == 0 ? "Room closed" : "Audio stopped. See diagnostics for details.";
                 devices.Clear();
             });
@@ -170,11 +179,11 @@ public partial class MainWindow : Window
                 var line = await reader.ReadLineAsync(timeout.Token);
                 if (line is null || line == "END") break;
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 7 || parts[0] != "MEMBER") continue;
+                if (parts.Length < 8 || parts[0] != "MEMBER") continue;
                 var loss = double.TryParse(parts[4], CultureInfo.InvariantCulture, out var value) ? value : 100;
                 next.Add(new DeviceRow(parts[1], parts[2],
                     parts[2] == "RECONNECTING" ? "Reconnecting" : loss > 5 ? "Unstable" : loss > 1 ? "Good" : "Excellent",
-                    "Device output"));
+                    parts[7].Replace('_', ' ')));
             }
             devices.Clear();
             foreach (var device in next) devices.Add(device);

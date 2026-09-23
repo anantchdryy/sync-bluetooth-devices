@@ -1,6 +1,7 @@
 #include "ControlChannel.hpp"
 #include "Room.hpp"
 #include "RoomControlClient.hpp"
+#include "RoomJoinClient.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -119,6 +120,18 @@ int main() {
           "Second client was not admitted");
   for (int line = 0; line < 3; ++line) (void)readLine(second);
   require(room.snapshot().members.size() == 2, "Concurrent room members missing");
+  {
+    RoomJoinClient desktop("127.0.0.1", roomServer.port());
+    const auto joined = desktop.snapshot();
+    require(joined.connected && joined.sessionId == 42 && joined.streamId == 7 &&
+                joined.audioPort == 40100 && joined.roomName == "Living Room",
+            "Desktop room JOIN failed");
+    require(room.snapshot().members.size() == 3,
+            "Desktop room member was not registered");
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  require(room.snapshot().members.size() == 2,
+          "Desktop room member was not removed after leave");
   require(exchange(first, "MEMBERS\n").starts_with("MEMBER "),
           "Host member query failed");
   require(readLine(first).starts_with("MEMBER "), "Second member was not listed");

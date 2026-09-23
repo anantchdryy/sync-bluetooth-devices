@@ -95,8 +95,11 @@ const char *connectionName(RoomConnectionState state) {
 }
 
 std::string hostStateLine(ControlStreamState &state) {
+  auto playback = state.playing.load(std::memory_order_acquire) ? "PLAYING" : "STOPPED";
+  if (state.room && state.room->snapshot().playbackState == RoomPlaybackState::Paused)
+    playback = "PAUSED";
   std::string result = std::string("HOST_STATE ") +
-      (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
+      playback + " " +
       std::to_string(state.sessionId) + " " +
       std::to_string(state.currentFrame.load(std::memory_order_acquire));
   if (state.room) {
@@ -163,7 +166,8 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
           std::to_string(member.roundTripMs) + " " +
           std::to_string(member.packetLossPercent) + " " +
           std::to_string(member.bufferDepthMs) + " " +
-          std::to_string(member.outputLatencyMs) + "\n";
+          std::to_string(member.outputLatencyMs) + " " +
+          member.outputRoute + "\n";
     }
     return response + "END\n";
   }
@@ -183,8 +187,16 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
     if (!(input >> status >> updated.roundTripMs >> updated.networkJitterMs >>
           updated.packetLossPercent >> updated.bufferDepthMs >>
           updated.estimatedSyncErrorMs >> updated.outputLatencyMs >>
-          updated.clockOffsetMs) || input >> trailing)
+          updated.clockOffsetMs))
       return "ERROR invalid-client-state\n";
+    if (input >> trailing) {
+      if (trailing.empty() || trailing.size() > 32 ||
+          !std::all_of(trailing.begin(), trailing.end(), [](unsigned char character) {
+            return std::isalnum(character) || character == '_' || character == '-';
+          })) return "ERROR invalid-client-state\n";
+      updated.outputRoute = trailing;
+      if (input >> trailing) return "ERROR invalid-client-state\n";
+    }
     for (double value : {updated.roundTripMs, updated.networkJitterMs,
                          updated.packetLossPercent, updated.bufferDepthMs,
                          updated.estimatedSyncErrorMs, updated.outputLatencyMs,

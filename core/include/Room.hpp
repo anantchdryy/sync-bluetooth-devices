@@ -32,6 +32,7 @@ struct RoomMember {
   double packetLossPercent{};
   double bufferDepthMs{};
   double outputLatencyMs{};
+  std::string outputRoute{"Unknown"};
   double estimatedSyncErrorMs{};
 };
 

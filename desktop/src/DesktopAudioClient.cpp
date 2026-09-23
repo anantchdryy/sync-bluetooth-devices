@@ -38,7 +38,14 @@ public:
   PacketReceiverWorker(const DesktopAudioClientConfig &config,
                        JitterBuffer &jitterBuffer)
       : receiver_(config.bindAddress, config.audioPort, 100ms),
-        jitterBuffer_(jitterBuffer), thread_(&PacketReceiverWorker::run, this) {
+        jitterBuffer_(jitterBuffer),
+        sessionId_(config.expectedSessionId == 0
+                       ? std::nullopt
+                       : std::optional<std::uint64_t>{config.expectedSessionId}),
+        streamId_(config.expectedStreamId == 0
+                      ? std::nullopt
+                      : std::optional<std::uint32_t>{config.expectedStreamId}),
+        thread_(&PacketReceiverWorker::run, this) {
   }
 
   ~PacketReceiverWorker() {
@@ -145,7 +152,6 @@ private:
   UdpAudioReceiver receiver_;
   JitterBuffer &jitterBuffer_;
   std::atomic_bool stop_{false};
-  std::thread thread_;
   std::optional<std::uint64_t> sessionId_;
   std::optional<std::uint32_t> streamId_;
   std::optional<std::uint32_t> highestSequence_;
@@ -156,6 +162,7 @@ private:
   std::atomic<PlaybackClock::Duration::rep> lastPacketNanoseconds_{0};
   mutable std::mutex exceptionMutex_;
   std::exception_ptr exception_;
+  std::thread thread_;
 };
 
 class ScheduledStreamPlayer {

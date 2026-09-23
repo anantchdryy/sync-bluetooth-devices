@@ -35,6 +35,29 @@ final class ReceiverViewModel: ObservableObject {
     @Published private(set) var diagnosticsURL: URL?
     @Published var calibrationAdjustmentMs = 0.0
 
+    var userStatus: String {
+        switch connectionState {
+        case .disconnected: return "Not connected"
+        case .discovering: return "Looking for rooms"
+        case .connecting: return "Joining room"
+        case .syncing: return "Syncing this device"
+        case .buffering: return hostPlaybackState == "PAUSED" ? "Paused by host" : "Preparing audio"
+        case .playing: return "Playing together"
+        case .degraded: return "Network quality is unstable"
+        case .reconnecting: return "Host connection lost. Reconnecting…"
+        }
+    }
+
+    var connectionQuality: String {
+        if connectionState == .reconnecting { return "Reconnecting" }
+        guard isListening, snapshot.packetsReceived > 0 else { return "Connecting" }
+        if snapshot.packetLossPercent > 5 ||
+           snapshot.networkJitterMilliseconds > 60 { return "Unstable" }
+        if snapshot.packetLossPercent > 1 ||
+           snapshot.networkJitterMilliseconds > 25 { return "Good" }
+        return "Excellent"
+    }
+
     private let receiver = UDPStreamReceiver()
     private let audio = AudioPlaybackController()
     private let clock = HostClockSync()
@@ -255,6 +278,7 @@ final class ReceiverViewModel: ObservableObject {
             buffer: playback.queuedMilliseconds,
             syncError: playback.estimatedSyncErrorMilliseconds ?? 0,
             outputLatency: playback.effectiveOutputLatencyMilliseconds ?? 0,
-            offset: clockEstimate?.offsetMilliseconds ?? 0)
+            offset: clockEstimate?.offsetMilliseconds ?? 0,
+            outputRoute: playback.outputRouteType)
     }
 }

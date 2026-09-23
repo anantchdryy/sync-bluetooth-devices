@@ -127,13 +127,19 @@ final class HostControlChannel {
 
     func updateClientState(_ state: String, rtt: Double, jitter: Double,
                            loss: Double, buffer: Double, syncError: Double,
-                           outputLatency: Double, offset: Double) {
+                           outputLatency: Double, offset: Double,
+                           outputRoute: String) {
         queue.async { [weak self] in
             let values = [rtt, jitter, loss, buffer, syncError,
                           outputLatency, offset]
             guard let self, values.allSatisfy(\.isFinite) else { return }
+            let routeBytes = outputRoute.utf8.prefix(32).map { byte -> UInt8 in
+                (48...57).contains(byte) || (65...90).contains(byte) ||
+                (97...122).contains(byte) || byte == 45 ? byte : 95
+            }
+            let route = String(decoding: routeBytes, as: UTF8.self)
             self.latestClientState = "CLIENT_STATE \(state) " +
-                values.map { String($0) }.joined(separator: " ")
+                values.map { String($0) }.joined(separator: " ") + " " + route
         }
     }
 

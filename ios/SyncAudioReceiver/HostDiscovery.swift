@@ -26,8 +26,8 @@ final class HostDiscovery {
                 guard let self else { return }
                 switch state {
                 case .ready: self.onStatus?("Searching local network")
-                case .failed(let error): self.onStatus?("Discovery failed: \(error)")
-                case .waiting(let error): self.onStatus?("Discovery waiting: \(error)")
+                case .failed, .waiting:
+                    self.onStatus?("Can't find rooms. Check Wi-Fi and Local Network access in Settings.")
                 default: break
                 }
             }

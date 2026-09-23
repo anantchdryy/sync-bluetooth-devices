@@ -8,6 +8,8 @@ struct DesktopAudioClientConfig {
   std::string bindAddress{"0.0.0.0"};
   std::uint16_t audioPort{40'100};
   std::uint16_t clockSyncPort{40'101};
+  std::uint64_t expectedSessionId{};
+  std::uint32_t expectedStreamId{};
   std::chrono::milliseconds playbackDelay{20};
   std::chrono::milliseconds startupLead{40};
   std::chrono::milliseconds outputLatencyAdjustment{};

@@ -6,6 +6,7 @@
 #include "DiscoveryService.hpp"
 #include "Room.hpp"
 #include "RoomControlClient.hpp"
+#include "RoomJoinClient.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -24,7 +25,7 @@
 
 namespace {
 
-enum class Mode { Local, Host, Client, Control };
+enum class Mode { Local, Host, Client, Control, RoomClient };
 
 struct CommandLine {
   Mode mode{Mode::Local};
@@ -57,7 +58,8 @@ void printUsage() {
       << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
          "[--control-port PORT] [--output-latency-ms -1000..1000]\n"
       << "  syncaudio control PLAY|PAUSE|STOP|\"SEEK FRAME\" "
-         "[--session-port PORT]\n";
+         "[--session-port PORT]\n"
+      << "  syncaudio room-client <host-ip> [--session-port PORT]\n";
 }
 
 #ifndef NDEBUG
@@ -115,8 +117,10 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     result.mode = Mode::Client;
   } else if (mode == "control") {
     result.mode = Mode::Control;
+  } else if (mode == "room-client") {
+    result.mode = Mode::RoomClient;
   } else {
-    throw std::invalid_argument("Mode must be 'host', 'client', or 'control'");
+    throw std::invalid_argument("Unknown mode");
   }
   result.argument = argv[2];
 
@@ -133,7 +137,8 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     } else if (option == "--control-port" && index + 1 < argc) {
       result.clockSyncPort = parsePort(argv[++index]);
     } else if (option == "--session-port" && index + 1 < argc &&
-               (result.mode == Mode::Host || result.mode == Mode::Control)) {
+               (result.mode == Mode::Host || result.mode == Mode::Control ||
+                result.mode == Mode::RoomClient)) {
       result.sessionPort = parsePort(argv[++index]);
     } else if (option == "--output-latency-ms" && index + 1 < argc) {
       result.outputLatencyAdjustment = parseOutputLatency(argv[++index]);
@@ -434,6 +439,48 @@ void runControl(const CommandLine &commandLine) {
     throw std::runtime_error("Room command was rejected: " + response);
 }
 
+void runRoomClient(const CommandLine &commandLine) {
+  std::cout << "Joining nearby room at " << commandLine.argument << '\n';
+  while (true) {
+    try {
+      RoomJoinClient room(commandLine.argument, commandLine.sessionPort);
+      auto state = room.snapshot();
+      std::cout << "Joined " << state.roomName << '\n';
+      std::uint32_t lastStream = 0;
+      bool observedInactive = true;
+      while (true) {
+        state = room.snapshot();
+        if (!state.connected) throw std::runtime_error("Room host disconnected");
+        if (state.playbackState != "PLAYING") observedInactive = true;
+        if (state.playbackState == "PLAYING" &&
+            (observedInactive || state.streamId != lastStream)) {
+          DesktopAudioClientConfig config;
+          config.audioPort = state.audioPort;
+          config.clockSyncPort = state.clockPort;
+          config.expectedSessionId = state.sessionId;
+          config.expectedStreamId = state.streamId;
+          config.outputLatencyAdjustment = commandLine.outputLatencyAdjustment;
+          lastStream = state.streamId;
+          observedInactive = false;
+          try {
+            DesktopAudioClient player(config);
+            const auto stats = player.run(commandLine.argument);
+            std::cout << "Room segment received: " << stats.packetsReceived
+                      << " packets, " << stats.packetLossPercent
+                      << "% estimated loss\n";
+          } catch (const std::exception &error) {
+            std::cerr << "Room audio buffering: " << error.what() << '\n';
+          }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+    } catch (const std::exception &error) {
+      std::cerr << "Reconnecting to room: " << error.what() << '\n';
+      std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+  }
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -451,6 +498,9 @@ int main(int argc, char *argv[]) {
       break;
     case Mode::Control:
       runControl(commandLine);
+      break;
+    case Mode::RoomClient:
+      runRoomClient(commandLine);
       break;
     }
     return 0;
