@@ -52,7 +52,9 @@ target_link_libraries(desktop_audio_player
 )
 target_compile_features(desktop_audio_player PUBLIC cxx_std_20)
 
-add_library(desktop_network_host STATIC desktop/src/DesktopNetworkHost.cpp)
+add_library(desktop_network_host STATIC
+    desktop/src/DesktopNetworkHost.cpp
+    desktop/src/NetworkImpairment.cpp)
 target_include_directories(desktop_network_host PUBLIC desktop/include)
 target_link_libraries(desktop_network_host
     PUBLIC syncaudio_core desktop_transport
@@ -137,4 +139,14 @@ if(BUILD_TESTING)
     target_link_libraries(desktop_audio_player_tests PRIVATE desktop_audio_player)
     enable_project_warnings(desktop_audio_player_tests)
     add_test(NAME desktop_audio_player_tests COMMAND desktop_audio_player_tests)
+
+    add_executable(network_impairment_tests tests/NetworkImpairmentTests.cpp)
+    target_link_libraries(network_impairment_tests PRIVATE desktop_network_host)
+    enable_project_warnings(network_impairment_tests)
+    add_test(NAME network_impairment_tests COMMAND network_impairment_tests)
+
+    add_executable(reliability_stress_tests tests/ReliabilityStressTests.cpp)
+    target_link_libraries(reliability_stress_tests PRIVATE syncaudio_core)
+    enable_project_warnings(reliability_stress_tests)
+    add_test(NAME reliability_stress_tests COMMAND reliability_stress_tests)
 endif()

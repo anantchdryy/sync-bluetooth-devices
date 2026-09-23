@@ -35,11 +35,15 @@ struct HostWelcome {
 final class HostControlChannel {
     var onWelcome: ((HostWelcome) -> Void)?
     var onState: ((String) -> Void)?
+    var onLost: (() -> Void)?
 
     private let queue = DispatchQueue(label: "TandemAudio.control")
     private var connection: NWConnection?
     private var timer: DispatchSourceTimer?
+    private var retryTimer: DispatchSourceTimer?
     private var generation = 0
+    private var desiredEndpoint: NWEndpoint?
+    private var retryAttempt = 0
     private var input = Data()
     private let deviceID: String = {
         if let saved = UserDefaults.standard.string(forKey: "TandemAudio.deviceID") {
@@ -49,40 +53,53 @@ final class HostControlChannel {
         UserDefaults.standard.set(created, forKey: "TandemAudio.deviceID")
         return created
     }()
+    var deviceIdentifier: String { deviceID }
 
     func join(endpoint: NWEndpoint) {
         queue.async { [weak self] in
             guard let self else { return }
             self.generation += 1
+            self.desiredEndpoint = endpoint
+            self.retryAttempt = 0
             self.cancelCurrent(sendLeave: true)
-            let currentGeneration = self.generation
+            self.startConnection()
+        }
+    }
+
+    private func startConnection() {
+            guard let endpoint = desiredEndpoint else { return }
+            retryTimer?.cancel()
+            retryTimer = nil
+            generation += 1
+            let currentGeneration = generation
             let connection = NWConnection(to: endpoint, using: .tcp)
             self.connection = connection
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self, self.generation == currentGeneration else { return }
                 switch state {
                 case .ready:
+                    self.retryAttempt = 0
                     self.onState?("Connected to host")
                     self.send("JOIN \(self.deviceID)")
                     self.receive(generation: currentGeneration)
                     self.startTimer(generation: currentGeneration)
                 case .failed(let error):
-                    self.onState?("Control failed: \(error)")
+                    self.scheduleRetry(reason: "Host connection failed: \(error)")
                 case .waiting(let error):
-                    self.onState?("Control waiting: \(error)")
+                    self.scheduleRetry(reason: "Host unavailable: \(error)")
                 case .cancelled:
-                    self.onState?("Disconnected")
+                    break
                 default: break
                 }
             }
             connection.start(queue: self.queue)
-        }
     }
 
     func stop() {
         queue.async { [weak self] in
             guard let self else { return }
             self.generation += 1
+            self.desiredEndpoint = nil
             self.cancelCurrent(sendLeave: true)
             self.onState?("Disconnected")
         }
@@ -98,8 +115,7 @@ final class HostControlChannel {
             guard let self, self.generation == generation else { return }
             if let data { self.input.append(data) }
             if self.input.count > 1_024 {
-                self.onState?("Malformed control response")
-                self.cancelCurrent(sendLeave: false)
+                self.scheduleRetry(reason: "Malformed control response")
                 return
             }
             while let newline = self.input.firstIndex(of: 10) {
@@ -110,8 +126,7 @@ final class HostControlChannel {
                 }
             }
             if isComplete || error != nil {
-                self.onState?("Control disconnected")
-                self.cancelCurrent(sendLeave: false)
+                self.scheduleRetry(reason: "Host connection lost")
                 return
             }
             self.receive(generation: generation)
@@ -136,6 +151,8 @@ final class HostControlChannel {
     }
 
     private func cancelCurrent(sendLeave: Bool) {
+        retryTimer?.cancel()
+        retryTimer = nil
         timer?.cancel()
         timer = nil
         if sendLeave { send("LEAVE") }
@@ -143,5 +160,25 @@ final class HostControlChannel {
         connection?.cancel()
         connection = nil
         input.removeAll()
+    }
+
+    private func scheduleRetry(reason: String) {
+        guard desiredEndpoint != nil, retryTimer == nil else { return }
+        onLost?()
+        retryAttempt = min(retryAttempt + 1, 5)
+        let delay = min(8, 1 << (retryAttempt - 1))
+        onState?("Reconnecting in \(delay)s: \(reason)")
+        generation += 1
+        timer?.cancel()
+        timer = nil
+        connection?.stateUpdateHandler = nil
+        connection?.cancel()
+        connection = nil
+        input.removeAll()
+        let retry = DispatchSource.makeTimerSource(queue: queue)
+        retry.schedule(deadline: .now() + .seconds(delay))
+        retry.setEventHandler { [weak self] in self?.startConnection() }
+        retryTimer = retry
+        retry.resume()
     }
 }

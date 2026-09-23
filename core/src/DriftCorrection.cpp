@@ -8,6 +8,18 @@ void DriftEstimator::addSample(std::int64_t time, std::int64_t offset) {
   if (!samples_.empty() && time <= samples_.back().time) {
     throw std::invalid_argument("Clock samples must have increasing timestamps");
   }
+  if (samples_.size() >= 4) {
+    const auto residual = std::abs(static_cast<double>(offset) -
+                                   offsetNanosecondsAt(time));
+    const auto elapsed = static_cast<double>(time - samples_.back().time);
+    const auto limit = std::max(5'000'000.0, elapsed * 0.001);
+    if (residual > limit) {
+      if (++consecutiveOutliers_ < 3) return;
+      // Repeated shifted samples indicate a discontinuity rather than noise.
+      samples_.clear();
+    } else consecutiveOutliers_ = 0;
+  }
+  if (samples_.empty()) consecutiveOutliers_ = 0;
   samples_.push_back({time, offset});
   // Keep recent history so an old measurement does not dominate forever.
   while (samples_.size() > 32 ||

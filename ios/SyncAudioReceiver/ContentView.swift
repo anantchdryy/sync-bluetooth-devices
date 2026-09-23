@@ -39,6 +39,7 @@ struct ContentView: View {
                 }
 
                 Section("Connection") {
+                    LabeledContent("Phase", value: model.connectionState.rawValue)
                     LabeledContent("State", value: model.snapshot.status)
                     LabeledContent("Control", value: model.controlStatus)
                     Text("Join a nearby host, or enter its address for debugging. Keep this app open while streaming.")
@@ -102,6 +103,12 @@ struct ContentView: View {
                     Text("Sync error is estimated from engine render timing and the audio session's output latency. It is not a measured acoustic difference.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                }
+                Section("Diagnostics") {
+                    Button("Prepare diagnostics export") { model.exportDiagnostics() }
+                    if let url = model.diagnosticsURL {
+                        ShareLink("Share diagnostics JSON", item: url)
+                    }
                 }
             }
             .navigationTitle("SyncAudio Receiver")

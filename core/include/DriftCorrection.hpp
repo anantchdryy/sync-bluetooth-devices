@@ -23,6 +23,7 @@ private:
   std::deque<Sample> samples_;
   double slope_{};
   double fittedOffsetAtLast_{};
+  std::uint32_t consecutiveOutliers_{};
 };
 
 class DriftCorrector {

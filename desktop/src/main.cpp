@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -31,6 +32,9 @@ struct CommandLine {
   std::uint16_t audioPort{40'100};
   std::uint16_t clockSyncPort{40'101};
   std::uint16_t sessionPort{40'102};
+#ifndef NDEBUG
+  std::optional<NetworkImpairmentConfig> impairment;
+#endif
 };
 
 void printUsage() {
@@ -39,9 +43,33 @@ void printUsage() {
       << "  syncaudio path/to/file.wav\n"
       << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT] "
          "[--control-port PORT] [--session-port PORT]\n"
+#ifndef NDEBUG
+      << "    Debug host only: [--impair-loss PERCENT] [--impair-delay MS] "
+         "[--impair-jitter MS] [--impair-duplicate PERCENT] "
+         "[--impair-reorder PERCENT] [--impair-blackout MS] "
+         "[--impair-seed INTEGER]\n"
+#endif
       << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
          "[--control-port PORT]\n";
 }
+
+#ifndef NDEBUG
+double parsePercent(std::string_view text) {
+  double value = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc{} || end != text.data() + text.size() ||
+      !(value >= 0 && value <= 100)) throw std::invalid_argument("Invalid impairment percent");
+  return value;
+}
+
+std::uint32_t parseImpairmentInteger(std::string_view text) {
+  std::uint32_t value = 0;
+  const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc{} || end != text.data() + text.size())
+    throw std::invalid_argument("Invalid impairment integer");
+  return value;
+}
+#endif
 
 std::uint16_t parsePort(std::string_view text) {
   unsigned int value = 0;
@@ -88,6 +116,20 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     } else if (option == "--session-port" && index + 1 < argc &&
                result.mode == Mode::Host) {
       result.sessionPort = parsePort(argv[++index]);
+#ifndef NDEBUG
+    } else if (result.mode == Mode::Host && index + 1 < argc &&
+               option.starts_with("--impair-")) {
+      if (!result.impairment) result.impairment.emplace();
+      const std::string_view value = argv[++index];
+      if (option == "--impair-loss") result.impairment->packetLossPercent = parsePercent(value);
+      else if (option == "--impair-delay") result.impairment->baseDelayMs = parseImpairmentInteger(value);
+      else if (option == "--impair-jitter") result.impairment->jitterMs = parseImpairmentInteger(value);
+      else if (option == "--impair-duplicate") result.impairment->duplicatePercent = parsePercent(value);
+      else if (option == "--impair-reorder") result.impairment->reorderPercent = parsePercent(value);
+      else if (option == "--impair-blackout") result.impairment->blackoutDurationMs = parseImpairmentInteger(value);
+      else if (option == "--impair-seed") result.impairment->seed = parseImpairmentInteger(value);
+      else throw std::invalid_argument("Unknown impairment option");
+#endif
     } else {
       throw std::invalid_argument(
           "Unknown, incomplete, or inapplicable option: " +
@@ -159,6 +201,9 @@ void runHost(const CommandLine &commandLine) {
   controlState.sampleRate = player.metadata().sampleRate;
   controlState.channels = static_cast<std::uint16_t>(player.metadata().channels);
   config.progressFrame = &controlState.currentFrame;
+#ifndef NDEBUG
+  config.impairment = commandLine.impairment;
+#endif
   DesktopNetworkHost host(config);
   ClockSyncServer clockServer("0.0.0.0", commandLine.clockSyncPort);
   std::unique_ptr<DiscoveryService> discovery;

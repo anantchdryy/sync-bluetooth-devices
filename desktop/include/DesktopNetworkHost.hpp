@@ -1,6 +1,10 @@
 #pragma once
 
 #include "PlaybackClock.hpp"
+#ifndef NDEBUG
+#include "NetworkImpairment.hpp"
+#include <optional>
+#endif
 
 #include <chrono>
 #include <atomic>
@@ -15,6 +19,9 @@ struct DesktopNetworkHostConfig {
   std::chrono::milliseconds sendAhead{500};
   std::uint64_t sessionId{};
   std::atomic<std::uint64_t> *progressFrame{};
+#ifndef NDEBUG
+  std::optional<NetworkImpairmentConfig> impairment;
+#endif
 };
 
 struct DesktopNetworkHostStats {

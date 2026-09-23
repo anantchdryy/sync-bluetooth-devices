@@ -145,6 +145,17 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
                                      static_cast<double>(sampleRate);
 
   UdpAudioSender sender(config_.destinationAddress, config_.port);
+#ifndef NDEBUG
+  std::optional<NetworkImpairment> impairment;
+  if (config_.impairment) impairment.emplace(*config_.impairment);
+  const auto impairmentNow = [] {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch());
+  };
+  const auto dispatchReady = [&] {
+    for (const auto &ready : impairment->drain(impairmentNow())) sender.send(ready.bytes);
+  };
+#endif
   PlaybackClock clock(sampleRate, playbackStartTime);
   std::vector<std::int16_t> samples(framesPerPacket * channelCount);
   std::uint64_t startFrame = 0;
@@ -185,7 +196,13 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
 
     const auto datagram = PacketSerializer::serialize(packet);
     if (stats.packetsSent == 0) firstSend = std::chrono::steady_clock::now();
-    sender.send(datagram);
+#ifndef NDEBUG
+    if (impairment) {
+      impairment->submit(datagram, impairmentNow());
+      dispatchReady();
+    } else
+#endif
+      sender.send(datagram);
     lastSend = std::chrono::steady_clock::now();
     stats.audioDatagramBytesSent += datagram.size();
     ++stats.packetsSent;
@@ -195,6 +212,15 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
       config_.progressFrame->store(startFrame, std::memory_order_release);
     }
   }
+
+#ifndef NDEBUG
+  if (impairment) {
+    while (impairment->pending() != 0) {
+      dispatchReady();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+#endif
 
   if (stats.packetsSent > 1) {
     stats.sendDurationSeconds =

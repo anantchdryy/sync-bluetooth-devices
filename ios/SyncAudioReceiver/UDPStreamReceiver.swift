@@ -11,16 +11,21 @@ final class UDPStreamReceiver {
     private var connections = [ObjectIdentifier: NWConnection]()
     private var updateTimer: DispatchSourceTimer?
     private var expectedHost: IPv4Address?
+    private var expectedSessionID: UInt64?
+    private var expectedStreamID: UInt32?
     private var accumulator = StreamAccumulator()
     private var generation = 0
 
-    func start(host: IPv4Address, port: UInt16) {
+    func start(host: IPv4Address, port: UInt16,
+               sessionID: UInt64, streamID: UInt32) {
         queue.async { [weak self] in
             guard let self else { return }
             self.generation += 1
             let currentGeneration = self.generation
             self.cancelCurrent()
             self.expectedHost = host
+            self.expectedSessionID = sessionID
+            self.expectedStreamID = streamID
             self.accumulator = StreamAccumulator()
             self.accumulator.setStatus("Starting listener")
             self.publish()
@@ -71,6 +76,8 @@ final class UDPStreamReceiver {
             self.generation += 1
             self.cancelCurrent()
             self.expectedHost = nil
+            self.expectedSessionID = nil
+            self.expectedStreamID = nil
             self.accumulator = StreamAccumulator()
             self.publish()
         }
@@ -111,7 +118,9 @@ final class UDPStreamReceiver {
                 connection.cancel()
                 return
             }
-            if let data, let packet = AudioPacket(datagram: data) {
+            if let data, let packet = AudioPacket(datagram: data),
+               packet.sessionID == self.expectedSessionID,
+               packet.streamID == self.expectedStreamID {
                 if self.accumulator.record(packet, at: ProcessInfo.processInfo.systemUptime) {
                     self.onPacket?(packet)
                 }
