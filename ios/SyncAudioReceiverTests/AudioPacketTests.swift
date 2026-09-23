@@ -4,10 +4,11 @@ import XCTest
 @testable import SyncAudioReceiver
 
 final class AudioPacketTests: XCTestCase {
-    func testVersionOneDatagram() {
+    func testVersionTwoDatagram() {
         let packet = AudioPacket(datagram: makeDatagram(sequence: 7))
         XCTAssertNotNil(packet)
         XCTAssertEqual(packet?.sessionID, 42)
+        XCTAssertEqual(packet?.streamID, 1)
         XCTAssertEqual(packet?.sequenceNumber, 7)
         XCTAssertEqual(packet?.sampleRate, 48_000)
         XCTAssertEqual(packet?.channels, 1)
@@ -97,15 +98,50 @@ final class AudioPacketTests: XCTestCase {
         }
     }
 
+    func testControlWelcomeValidation() {
+        let welcome = HostWelcome(line: "WELCOME 42 1 40100 40101 48000 2 192.168.1.10")
+        XCTAssertEqual(welcome?.sessionID, 42)
+        XCTAssertEqual(welcome?.hostIPv4.rawValue, "192.168.1.10")
+        XCTAssertNil(HostWelcome(line: "WELCOME 42 1 40100 40101 0 2 192.168.1.10"))
+        XCTAssertNil(HostWelcome(line: "WELCOME 42 1 40100 40101 48000 2 bad-host"))
+    }
+
+    func testClockFilterRejectsHighRTTOutlier() {
+        var filter = ClockSampleFilter()
+        let offsets = [2_000_000.0, 2_100_000, 80_000_000, 1_900_000]
+        let rtts = [2_000_000.0, 3_000_000, 80_000_000, 2_500_000]
+        var result: ClockEstimate?
+        for index in offsets.indices {
+            result = filter.add(ClockEstimate(offsetNanoseconds: offsets[index],
+                                              roundTripNanoseconds: rtts[index],
+                                              measuredAtNanoseconds: UInt64(index + 1) * 1_000_000_000,
+                                              sampleCount: 1))
+        }
+        XCTAssertEqual(result?.offsetMilliseconds ?? 0, 2.0, accuracy: 0.2)
+        XCTAssertEqual(result?.measurementQuality, "Good")
+    }
+
+    func testAdaptiveBufferGrowsOnJitter() {
+        var accumulator = StreamAccumulator()
+        let first = AudioPacket(datagram: makeDatagram(sequence: 0,
+                                                       presentationTime: 1_000_000_000))!
+        let second = AudioPacket(datagram: makeDatagram(sequence: 1, startFrame: 2,
+                                                        presentationTime: 1_020_000_000))!
+        accumulator.record(first, at: 10)
+        accumulator.record(second, at: 10.22)
+        XCTAssertGreaterThan(accumulator.snapshot.networkJitterMilliseconds, 0)
+        XCTAssertGreaterThan(accumulator.snapshot.targetBufferMilliseconds, 180)
+    }
+
     private func makeDatagram(sequence: UInt32, startFrame: UInt64 = 0,
                               presentationTime: UInt64 = 0) -> Data {
-        var bytes = [UInt8](repeating: 0, count: 52)
+        var bytes = [UInt8](repeating: 0, count: 56)
         bytes[0] = 0x53
         bytes[1] = 0x41
         bytes[2] = 0x55
         bytes[3] = 0x44
-        bytes[4] = 1
-        bytes[5] = 48
+        bytes[4] = 2
+        bytes[5] = 52
         bytes[15] = 42 // session ID
         bytes[16] = UInt8((sequence >> 24) & 0xff)
         bytes[17] = UInt8((sequence >> 16) & 0xff)
@@ -119,10 +155,11 @@ final class AudioPacketTests: XCTestCase {
         write(presentationTime, into: &bytes, at: 36)
         bytes[45] = 4 // payload bytes
         bytes[47] = 2 // frames
-        bytes[48] = 1
-        bytes[49] = 0
-        bytes[50] = 2
-        bytes[51] = 0
+        bytes[51] = 1 // stream ID
+        bytes[52] = 1
+        bytes[53] = 0
+        bytes[54] = 2
+        bytes[55] = 0
         return Data(bytes)
     }
 

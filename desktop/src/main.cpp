@@ -2,6 +2,8 @@
 #include "DesktopAudioClient.hpp"
 #include "DesktopAudioPlayer.hpp"
 #include "DesktopNetworkHost.hpp"
+#include "ControlChannel.hpp"
+#include "DiscoveryService.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -9,6 +11,8 @@
 #include <exception>
 #include <iomanip>
 #include <iostream>
+#include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -26,6 +30,7 @@ struct CommandLine {
   std::string bindAddress{"0.0.0.0"};
   std::uint16_t audioPort{40'100};
   std::uint16_t clockSyncPort{40'101};
+  std::uint16_t sessionPort{40'102};
 };
 
 void printUsage() {
@@ -33,7 +38,7 @@ void printUsage() {
       << "Usage:\n"
       << "  syncaudio path/to/file.wav\n"
       << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT] "
-         "[--control-port PORT]\n"
+         "[--control-port PORT] [--session-port PORT]\n"
       << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
          "[--control-port PORT]\n";
 }
@@ -80,14 +85,20 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
       result.audioPort = parsePort(argv[++index]);
     } else if (option == "--control-port" && index + 1 < argc) {
       result.clockSyncPort = parsePort(argv[++index]);
+    } else if (option == "--session-port" && index + 1 < argc &&
+               result.mode == Mode::Host) {
+      result.sessionPort = parsePort(argv[++index]);
     } else {
       throw std::invalid_argument(
           "Unknown, incomplete, or inapplicable option: " +
           std::string(option));
     }
   }
-  if (result.audioPort == result.clockSyncPort) {
-    throw std::invalid_argument("Audio and control ports must be different");
+  if (result.audioPort == result.clockSyncPort ||
+      (result.mode == Mode::Host &&
+       (result.sessionPort == result.audioPort ||
+        result.sessionPort == result.clockSyncPort))) {
+    throw std::invalid_argument("Audio, clock, and session ports must differ");
   }
   return result;
 }
@@ -138,17 +149,39 @@ void runHost(const CommandLine &commandLine) {
   DesktopNetworkHostConfig config;
   config.destinationAddress = commandLine.destinationAddress;
   config.port = commandLine.audioPort;
+  std::random_device random;
+  config.sessionId = (static_cast<std::uint64_t>(random()) << 32U) | random();
+  if (config.sessionId == 0) config.sessionId = 1;
+  ControlStreamState controlState;
+  controlState.sessionId = config.sessionId;
+  controlState.audioPort = config.port;
+  controlState.clockPort = commandLine.clockSyncPort;
+  controlState.sampleRate = player.metadata().sampleRate;
+  controlState.channels = static_cast<std::uint16_t>(player.metadata().channels);
+  config.progressFrame = &controlState.currentFrame;
   DesktopNetworkHost host(config);
   ClockSyncServer clockServer("0.0.0.0", commandLine.clockSyncPort);
+  std::unique_ptr<DiscoveryService> discovery;
+  try {
+    discovery = std::make_unique<DiscoveryService>(commandLine.sessionPort);
+    controlState.hostAddress = discovery->hostAddress();
+  } catch (const std::exception &error) {
+    std::cerr << "LAN discovery unavailable: " << error.what() << '\n';
+    controlState.hostAddress = "0.0.0.0";
+  }
+  ControlServer controlServer(commandLine.sessionPort, controlState);
 
   std::cout << "UDP destination: " << config.destinationAddress << ':'
             << config.port << '\n'
             << "Clock-sync port: " << commandLine.clockSyncPort << '\n'
+            << "Session TCP port: " << commandLine.sessionPort << '\n'
+            << "Discovered as:    " << controlState.hostAddress << '\n'
             << "PCM format:      signed 16-bit little-endian\n"
             << "Playing locally and streaming...\n";
 
   const auto scheduledStart = PlaybackClock::now() + config.sendAhead;
   player.playAt(scheduledStart);
+  controlState.playing.store(true, std::memory_order_release);
   const auto playbackStart = player.expectedPlaybackTimestamp(0);
   if (!playbackStart) {
     throw std::runtime_error("Playback timeline did not start");
@@ -159,6 +192,7 @@ void runHost(const CommandLine &commandLine) {
       host.streamFile(commandLine.argument, *playbackStart, metadata.sampleRate,
                       static_cast<std::uint16_t>(metadata.channels));
   waitForPlayback(player);
+  controlState.playing.store(false, std::memory_order_release);
 
   std::cout << "Network stream finished.\n"
             << "Session ID:      " << stats.sessionId << '\n'

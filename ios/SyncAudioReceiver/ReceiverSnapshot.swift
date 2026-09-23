@@ -11,12 +11,16 @@ struct ReceiverSnapshot {
     var channels: UInt16?
     var bufferDepthMilliseconds = 0.0
     var audioFormatSupported = false
+    var networkJitterMilliseconds = 0.0
+    var packetLossPercent = 0.0
+    var targetBufferMilliseconds = 180.0
 }
 
 /// Packet statistics and a bounded history for receive-depth diagnostics.
 struct StreamAccumulator {
     private(set) var snapshot = ReceiverSnapshot()
     private var sessionID: UInt64?
+    private var streamID: UInt32?
     private var highestSequence: UInt32?
     private var missingSequences = Set<UInt32>()
     private var recentSequences = Set<UInt32>()
@@ -26,6 +30,7 @@ struct StreamAccumulator {
     private var bufferedFrames: UInt64 = 0
     private var bufferedBytes = 0
     private var lastArrival: TimeInterval?
+    private var lastPresentationNanoseconds: UInt64?
 
     mutating func setStatus(_ status: String) {
         snapshot.status = status
@@ -33,9 +38,10 @@ struct StreamAccumulator {
 
     @discardableResult
     mutating func record(_ packet: AudioPacket, at now: TimeInterval) -> Bool {
-        if sessionID != packet.sessionID {
+        if sessionID != packet.sessionID || streamID != packet.streamID {
             self = StreamAccumulator()
             sessionID = packet.sessionID
+            streamID = packet.streamID
         }
         if let sampleRate = snapshot.sampleRate,
            (sampleRate != packet.sampleRate || snapshot.channels != packet.channels) {
@@ -86,6 +92,21 @@ struct StreamAccumulator {
             ) != nil
         }
 
+        if let lastArrival, let lastPresentationNanoseconds,
+           packet.presentationTimestampNanoseconds > lastPresentationNanoseconds {
+            let arrivalGapMs = (now - lastArrival) * 1_000
+            let streamGapMs = Double(packet.presentationTimestampNanoseconds - lastPresentationNanoseconds) / 1_000_000
+            let deviation = abs(arrivalGapMs - streamGapMs)
+            snapshot.networkJitterMilliseconds +=
+                (deviation - snapshot.networkJitterMilliseconds) / 16
+            let desired = min(350, max(120, 150 + 4 * snapshot.networkJitterMilliseconds))
+            if desired > snapshot.targetBufferMilliseconds {
+                snapshot.targetBufferMilliseconds = min(desired, snapshot.targetBufferMilliseconds + 10)
+            } else {
+                snapshot.targetBufferMilliseconds = max(desired, snapshot.targetBufferMilliseconds - 0.25)
+            }
+        }
+        lastPresentationNanoseconds = packet.presentationTimestampNanoseconds
         lastArrival = now
         arrivals.append(now)
         packets.append(packet)
@@ -106,6 +127,9 @@ struct StreamAccumulator {
     private mutating func trim(at now: TimeInterval) {
         arrivals.removeAll { now - $0 >= 1 }
         snapshot.packetsPerSecond = arrivals.count
+        let expected = snapshot.packetsReceived + snapshot.packetsLost
+        snapshot.packetLossPercent = expected == 0 ? 0 :
+            100 * Double(snapshot.packetsLost) / Double(expected)
         if let sampleRate = snapshot.sampleRate {
             let maximumFrames = UInt64(sampleRate) / 2
             while !packets.isEmpty &&

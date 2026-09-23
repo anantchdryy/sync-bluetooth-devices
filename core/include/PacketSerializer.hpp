@@ -8,7 +8,7 @@
 
 class PacketSerializer {
 public:
-  static constexpr std::size_t HeaderSize = 48;
+  static constexpr std::size_t HeaderSize = 52;
   static constexpr std::size_t MaximumDatagramSize = 1'200;
   static constexpr std::size_t MaximumPayloadSize =
       MaximumDatagramSize - HeaderSize;

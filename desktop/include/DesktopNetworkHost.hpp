@@ -3,6 +3,7 @@
 #include "PlaybackClock.hpp"
 
 #include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -12,6 +13,8 @@ struct DesktopNetworkHostConfig {
   std::uint16_t port{40'100};
   std::chrono::milliseconds desiredPacketDuration{10};
   std::chrono::milliseconds sendAhead{500};
+  std::uint64_t sessionId{};
+  std::atomic<std::uint64_t> *progressFrame{};
 };
 
 struct DesktopNetworkHostStats {

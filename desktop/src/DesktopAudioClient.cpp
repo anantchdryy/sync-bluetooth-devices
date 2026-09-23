@@ -115,9 +115,11 @@ private:
         }
         if (!sessionId_) {
           sessionId_ = packet.sessionId;
+          streamId_ = packet.streamId;
         } else if (packet.sessionId != *sessionId_) {
           continue;
         }
+        if (packet.streamId != *streamId_) continue;
         updateSequenceStatistics(packet.sequenceNumber);
         bool inserted = false;
         try {
@@ -144,6 +146,7 @@ private:
   std::atomic_bool stop_{false};
   std::thread thread_;
   std::optional<std::uint64_t> sessionId_;
+  std::optional<std::uint32_t> streamId_;
   std::optional<std::uint32_t> highestSequence_;
   std::unordered_set<std::uint32_t> missingSequences_;
   std::atomic<std::uint64_t> packetsReceived_{0};

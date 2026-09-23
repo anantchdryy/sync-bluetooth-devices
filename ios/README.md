@@ -40,18 +40,21 @@ iPhone is required to validate desktop-to-phone Wi-Fi delivery.
 
 1. Connect the desktop and iPhone to the same Wi-Fi/LAN. Find the desktop's
    IPv4 address and the iPhone's IPv4 address in their network settings.
-2. In the iPhone app, enter the **desktop host IPv4 address**, audio UDP port
-   `40100`, and clock UDP port `40101`, then tap **Start Listening**. Leave the
-   app in the foreground. Allow UDP on both ports through the desktop firewall.
+2. In the iPhone app, select the desktop under **Nearby hosts**. Bonjour uses
+   `_tandemaudio._tcp` and the host's TCP session port `40102`. For debugging,
+   enter the host IPv4 address, audio UDP port `40100`, clock UDP port `40101`,
+   and session TCP port `40102` manually. Leave the app in the foreground.
+   Allow these ports and mDNS UDP `5353` through the desktop firewall.
 3. On the desktop, build the repository as described in the root README. Run
    the host with the **iPhone's IPv4 address** as its destination:
 
    ```powershell
-   .\build\Release\syncaudio.exe host "C:\path\to\file.wav" --address 192.168.1.20 --port 40100 --control-port 40101
+   .\build\Release\syncaudio.exe host "C:\path\to\file.wav" --port 40100 --control-port 40101 --session-port 40102
    ```
 
-   Replace `192.168.1.20` with the iPhone's address. Permit private-network
-   traffic through the desktop firewall if prompted.
+   The default audio destination is LAN broadcast. For a direct stream, add
+   `--address <iphone-ipv4>`. Permit private-network traffic through the desktop
+   firewall if prompted.
 4. The app changes from **Waiting for host packets** to **Receiving** and shows
    the latest sequence number, packets per second, estimated packet loss,
    sample rate, channel count, receive buffer depth, playback queue depth,

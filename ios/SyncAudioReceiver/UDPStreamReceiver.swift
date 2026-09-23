@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-/// Receives version-1 SAUD UDP datagrams from one configured IPv4 host.
+/// Receives version-2 SAUD UDP datagrams from one configured IPv4 host.
 final class UDPStreamReceiver {
     var onSnapshot: ((ReceiverSnapshot) -> Void)?
     var onPacket: ((AudioPacket) -> Void)?

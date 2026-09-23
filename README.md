@@ -98,9 +98,9 @@ traffic requires the Npcap loopback adapter. Each datagram begins with ASCII
 Windows Firewall may prompt for network access when broadcast mode is first
 used. Only private-network access is needed for LAN testing.
 
-### Audio packet wire format (version 1)
+### Audio packet wire format (version 2)
 
-The header is exactly 48 bytes. Multi-byte header integers use network byte
+The header is exactly 52 bytes. Multi-byte header integers use network byte
 order (big-endian); PCM samples are interleaved signed 16-bit little-endian.
 No C/C++ struct is copied directly to the wire, so compiler padding cannot
 change the format.
@@ -108,10 +108,10 @@ change the format.
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 4 | Magic: ASCII `SAUD` |
-| 4 | 1 | Protocol version (`1`) |
-| 5 | 1 | Header size (`48`) |
+| 4 | 1 | Protocol version (`2`) |
+| 5 | 1 | Header size (`52`) |
 | 6 | 2 | Flags (currently `0`) |
-| 8 | 8 | Stream/session ID |
+| 8 | 8 | Session ID |
 | 16 | 4 | Sequence number |
 | 20 | 4 | Sample rate |
 | 24 | 2 | Channel count |
@@ -121,11 +121,12 @@ change the format.
 | 36 | 8 | Host steady-clock presentation timestamp, nanoseconds |
 | 44 | 2 | PCM payload size in bytes |
 | 46 | 2 | PCM frame count |
-| 48 | variable | Interleaved PCM payload, at most 1,152 bytes |
+| 48 | 4 | Stream ID (`1` for the initial PCM stream) |
+| 52 | variable | Interleaved PCM payload, at most 1,148 bytes |
 
 Packets are sent approximately 500 ms ahead of their presentation timestamp.
 The 1,200-byte datagram ceiling avoids typical IP fragmentation. At 44.1 kHz
-stereo this limit produces 288-frame packets (about 6.53 ms); the shorter than
+stereo this limit produces 287-frame packets (about 6.51 ms); the shorter than
 preferred duration is necessary while sending uncompressed PCM. The monotonic
 timestamp is local to the host and is translated to the client's steady clock
 using the clock-offset measurement below.

@@ -9,11 +9,12 @@ enum class AudioSampleFormat : std::uint8_t {
 };
 
 struct AudioPacket {
-  static constexpr std::uint8_t CurrentProtocolVersion = 1;
+  static constexpr std::uint8_t CurrentProtocolVersion = 2;
 
   std::uint8_t protocolVersion{CurrentProtocolVersion};
   std::uint16_t flags{};
   std::uint64_t sessionId{};
+  std::uint32_t streamId{1};
   std::uint32_t sequenceNumber{};
   std::uint32_t sampleRate{};
   std::uint16_t channelCount{};

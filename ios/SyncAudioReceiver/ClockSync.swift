@@ -7,12 +7,50 @@ struct ClockEstimate {
     let roundTripNanoseconds: Double
     let measuredAtNanoseconds: UInt64
     let sampleCount: Int
+    var estimatedDriftPpm: Double? = nil
+    var measurementQuality = "Learning"
 
     var offsetMilliseconds: Double { offsetNanoseconds / 1_000_000 }
     var roundTripMilliseconds: Double { roundTripNanoseconds / 1_000_000 }
 
     func localTime(forHostNanoseconds hostTime: UInt64) -> Double {
         Double(hostTime) - offsetNanoseconds
+    }
+}
+
+/// Rejects queueing outliers by using the median offset of the three fastest
+/// recent probes. A slope is reported only after measurements span five seconds.
+struct ClockSampleFilter {
+    private(set) var samples = [ClockEstimate]()
+
+    mutating func add(_ sample: ClockEstimate) -> ClockEstimate {
+        samples.append(sample)
+        if samples.count > 16 { samples.removeFirst() }
+        let recent = Array(samples.suffix(8))
+        let fast = Array(recent.sorted { $0.roundTripNanoseconds < $1.roundTripNanoseconds }.prefix(3))
+        let sortedOffsets = fast.map(\.offsetNanoseconds).sorted()
+        let median = sortedOffsets[sortedOffsets.count / 2]
+        let minimumRTT = fast.map(\.roundTripNanoseconds).min() ?? sample.roundTripNanoseconds
+        let spread = (sortedOffsets.last ?? median) - (sortedOffsets.first ?? median)
+        let quality = recent.count >= 4 && minimumRTT < 10_000_000 && spread < 2_000_000
+            ? "Good" : recent.count >= 2 ? "Fair" : "Learning"
+        var drift: Double?
+        if let first = recent.first,
+           sample.measuredAtNanoseconds > first.measuredAtNanoseconds + 5_000_000_000 {
+            let x = recent.map { Double($0.measuredAtNanoseconds - first.measuredAtNanoseconds) }
+            let y = recent.map(\.offsetNanoseconds)
+            let meanX = x.reduce(0, +) / Double(x.count)
+            let meanY = y.reduce(0, +) / Double(y.count)
+            let covariance = zip(x, y).reduce(0.0) { $0 + ($1.0 - meanX) * ($1.1 - meanY) }
+            let variance = x.reduce(0.0) { $0 + pow($1 - meanX, 2) }
+            if variance > 0 { drift = max(-1_000, min(1_000, covariance / variance * 1_000_000)) }
+        }
+        return ClockEstimate(offsetNanoseconds: median,
+                             roundTripNanoseconds: minimumRTT,
+                             measuredAtNanoseconds: sample.measuredAtNanoseconds,
+                             sampleCount: recent.count,
+                             estimatedDriftPpm: drift,
+                             measurementQuality: quality)
     }
 }
 
@@ -80,7 +118,7 @@ final class HostClockSync {
     private var generation = 0
     private var nextID: UInt32 = 1
     private var pending: (id: UInt32, sentAt: UInt64)?
-    private var samples = [ClockEstimate]()
+    private var filter = ClockSampleFilter()
     private var lastProbe: UInt64 = 0
 
     func start(host: IPv4Address, port: UInt16) {
@@ -126,7 +164,7 @@ final class HostClockSync {
         guard let connection else { return }
         let now = DispatchTime.now().uptimeNanoseconds
         if let pending, now - pending.sentAt < 400_000_000 { return }
-        if samples.count >= 8 && now - lastProbe < 5_000_000_000 { return }
+        if filter.samples.count >= 8 && now - lastProbe < 5_000_000_000 { return }
         let id = nextID
         nextID &+= 1
         lastProbe = now
@@ -146,16 +184,8 @@ final class HostClockSync {
                                                    sentAt: pending.sentAt,
                                                    receivedAt: DispatchTime.now().uptimeNanoseconds) {
                 self.pending = nil
-                self.samples.append(sample)
-                if self.samples.count > 8 { self.samples.removeFirst() }
-                if let best = self.samples.min(by: { $0.roundTripNanoseconds < $1.roundTripNanoseconds }) {
-                    let estimate = ClockEstimate(offsetNanoseconds: best.offsetNanoseconds,
-                                                 roundTripNanoseconds: best.roundTripNanoseconds,
-                                                 measuredAtNanoseconds: best.measuredAtNanoseconds,
-                                                 sampleCount: self.samples.count)
-                    self.onEstimate?(estimate)
-                    self.onStatus?("Clock synced")
-                }
+                self.onEstimate?(self.filter.add(sample))
+                self.onStatus?("Clock synced")
             }
             self.receiveNext(generation: generation)
         }
@@ -168,7 +198,7 @@ final class HostClockSync {
         connection?.cancel()
         connection = nil
         pending = nil
-        samples.removeAll()
+        filter = ClockSampleFilter()
         lastProbe = 0
     }
 }

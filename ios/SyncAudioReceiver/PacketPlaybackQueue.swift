@@ -19,6 +19,7 @@ struct PacketPlaybackQueue {
     private(set) var sampleRate: UInt32?
     private(set) var channels: UInt16?
     private(set) var sessionID: UInt64?
+    private(set) var streamID: UInt32?
 
     var bufferedFrames: UInt64 {
         guard let first = cursor,
@@ -38,14 +39,17 @@ struct PacketPlaybackQueue {
         cursor = packets.keys.min()
     }
 
-    mutating func insert(_ packet: AudioPacket) {
-        if sessionID != packet.sessionID || sampleRate != packet.sampleRate || channels != packet.channels {
+    @discardableResult
+    mutating func insert(_ packet: AudioPacket) -> Bool {
+        if sessionID != packet.sessionID || streamID != packet.streamID ||
+           sampleRate != packet.sampleRate || channels != packet.channels {
             self = PacketPlaybackQueue()
             sessionID = packet.sessionID
+            streamID = packet.streamID
             sampleRate = packet.sampleRate
             channels = packet.channels
         }
-        if let cursor, packet.startFrame < cursor { return }
+        if let cursor, packet.startFrame < cursor { return false }
         packets[packet.startFrame] = packet
         if cursor == nil { cursor = packet.startFrame }
         // Limit memory if audio output is paused or cannot start.
@@ -53,6 +57,7 @@ struct PacketPlaybackQueue {
             packets.removeValue(forKey: oldest)
             cursor = packets.keys.min()
         }
+        return true
     }
 
     mutating func popNext() -> Item? {

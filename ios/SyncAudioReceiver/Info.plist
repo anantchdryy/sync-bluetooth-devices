@@ -21,7 +21,11 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Receive audio packets from the desktop host on your local Wi-Fi network.</string>
+    <string>Discover hosts and receive synchronized audio on your local Wi-Fi network.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_tandemaudio._tcp</string>
+    </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

@@ -85,11 +85,18 @@ void validate(const AudioPacket &packet) {
   if (packet.protocolVersion != AudioPacket::CurrentProtocolVersion) {
     throw std::invalid_argument("Unsupported audio protocol version");
   }
-  if (packet.sampleRate == 0) {
-    throw std::invalid_argument("Audio packet sample rate must be non-zero");
+  if (packet.sampleRate < 8'000 || packet.sampleRate > 192'000) {
+    throw std::invalid_argument("Audio packet sample rate is unsupported");
   }
-  if (packet.channelCount == 0) {
-    throw std::invalid_argument("Audio packet channel count must be non-zero");
+  if (packet.channelCount == 0 || packet.channelCount > 2) {
+    throw std::invalid_argument("Audio packet channel count is unsupported");
+  }
+  if (packet.streamId == 0 || packet.frameCount == 0 ||
+      packet.startFrame > std::numeric_limits<std::uint64_t>::max() -
+                              packet.frameCount ||
+      packet.presentationTimestampNanoseconds >
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    throw std::invalid_argument("Audio packet identifiers or timing are invalid");
   }
   if (packet.pcmPayload.empty()) {
     throw std::invalid_argument("Audio packet PCM payload must not be empty");
@@ -134,6 +141,7 @@ std::vector<std::byte> PacketSerializer::serialize(const AudioPacket &packet) {
   appendU64(output, packet.presentationTimestampNanoseconds);
   appendU16(output, static_cast<std::uint16_t>(packet.pcmPayload.size()));
   appendU16(output, packet.frameCount);
+  appendU32(output, packet.streamId);
   output.insert(output.end(), packet.pcmPayload.begin(),
                 packet.pcmPayload.end());
   return output;
@@ -170,6 +178,7 @@ AudioPacket PacketSerializer::deserialize(std::span<const std::byte> data) {
   packet.presentationTimestampNanoseconds = reader.readU64();
   const auto payloadSize = reader.readU16();
   packet.frameCount = reader.readU16();
+  packet.streamId = reader.readU32();
 
   if (reader.remaining() != payloadSize) {
     throw std::invalid_argument("Audio packet payload size is inconsistent");

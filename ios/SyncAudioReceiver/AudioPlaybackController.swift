@@ -11,6 +11,9 @@ struct PlaybackSnapshot {
     var hardwareSampleRate: Double?
     var estimatedSyncErrorMilliseconds: Double?
     var presentationDelayMilliseconds = 20.0
+    var targetBufferMilliseconds = 180.0
+    var latePackets = 0
+    var latePacketRate = 0.0
 }
 
 /// Runs AVAudioEngine and its queue on one serial dispatch queue.
@@ -34,6 +37,7 @@ final class AudioPlaybackController {
     private var scheduledHostTime: UInt64?
     private var startClockOffsetNanoseconds: Double?
     private var lastLog = 0.0
+    private var receivedPackets = 0
 
     func start() {
         queue.async { [weak self] in
@@ -67,11 +71,17 @@ final class AudioPlaybackController {
             guard let self, self.active, packet.channels <= 2,
                   (8_000...192_000).contains(packet.sampleRate) else { return }
             if let sessionID = self.packets.sessionID,
-               (sessionID != packet.sessionID || self.packets.sampleRate != packet.sampleRate ||
+               (sessionID != packet.sessionID || self.packets.streamID != packet.streamID ||
+                self.packets.sampleRate != packet.sampleRate ||
                 self.packets.channels != packet.channels) {
                 self.resetStream()
             }
-            self.packets.insert(packet)
+            self.receivedPackets += 1
+            if !self.packets.insert(packet) {
+                self.snapshot.latePackets += 1
+                self.snapshot.latePacketRate =
+                    Double(self.snapshot.latePackets) / Double(self.receivedPackets)
+            }
             self.pump()
         }
     }
@@ -80,6 +90,13 @@ final class AudioPlaybackController {
         queue.async { [weak self] in
             self?.clockEstimate = estimate
             self?.pump()
+        }
+    }
+
+    func updateTargetBuffer(milliseconds: Double) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.snapshot.targetBufferMilliseconds = min(350, max(120, milliseconds))
         }
     }
 
@@ -122,8 +139,9 @@ final class AudioPlaybackController {
             guard let first = packets.packets.values.first, configure(format: first) else { return }
         }
         guard let format else { return }
-        let prebufferFrames = Int(Double(sampleRate) * 0.18)
-        let targetFrames = Int(Double(sampleRate) * 0.25)
+        let prebufferFrames = Int(Double(sampleRate) * snapshot.targetBufferMilliseconds / 1_000)
+        let targetFrames = Int(Double(sampleRate) *
+                               (snapshot.targetBufferMilliseconds + 70) / 1_000)
         if !primed && queuedFrames == 0 {
             let minimumTimestamp = PlaybackTiming.minimumPacketTimestamp(
                 estimate: clockEstimate,
@@ -173,6 +191,7 @@ final class AudioPlaybackController {
         }
         if primed && queuedFrames == 0 {
             snapshot.underruns += 1
+            snapshot.targetBufferMilliseconds = min(350, snapshot.targetBufferMilliseconds + 20)
             resetStream()
         }
         snapshot.queuedMilliseconds = Double(queuedFrames) * 1_000 / Double(sampleRate)
@@ -242,6 +261,7 @@ final class AudioPlaybackController {
         queuedFrames = 0
         primed = false
         packets = PacketPlaybackQueue()
+        receivedPackets = 0
         scheduledHostTime = nil
         startClockOffsetNanoseconds = nil
         snapshot.estimatedSyncErrorMilliseconds = nil

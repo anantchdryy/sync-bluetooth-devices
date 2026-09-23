@@ -1,11 +1,12 @@
 import Foundation
 
-/// The desktop host's version-1 SAUD datagram. Multi-byte header fields are big-endian.
+/// The desktop host's version-2 SAUD datagram. Multi-byte header fields are big-endian.
 struct AudioPacket {
-    static let headerSize = 48
+    static let headerSize = 52
     static let maximumDatagramSize = 1_200
 
     let sessionID: UInt64
+    let streamID: UInt32
     let sequenceNumber: UInt32
     let sampleRate: UInt32
     let channels: UInt16
@@ -19,9 +20,9 @@ struct AudioPacket {
         guard bytes.count >= Self.headerSize,
               bytes.count <= Self.maximumDatagramSize,
               bytes[0...3].elementsEqual([0x53, 0x41, 0x55, 0x44]),
-              bytes[4] == 1,
+              bytes[4] == 2,
               bytes[5] == Self.headerSize,
-              bytes[26] == 1 else {
+              bytes[26] == 1, bytes[27] == 0 else {
             return nil
         }
 
@@ -33,8 +34,12 @@ struct AudioPacket {
         let presentationTime = Self.readUInt64(bytes, at: 36)
         let payloadSize = Int(Self.readUInt16(bytes, at: 44))
         let frameCount = Self.readUInt16(bytes, at: 46)
+        let streamID = Self.readUInt32(bytes, at: 48)
 
-        guard sampleRate > 0, channels > 0, frameCount > 0,
+        guard (8_000...192_000).contains(sampleRate), channels > 0,
+              channels <= 2, frameCount > 0, streamID > 0,
+              startFrame <= UInt64.max - UInt64(frameCount),
+              presentationTime <= UInt64(Int64.max),
               payloadSize <= Self.maximumDatagramSize - Self.headerSize,
               bytes.count == Self.headerSize + payloadSize,
               payloadSize == Int(frameCount) * Int(channels) * 2 else {
@@ -42,6 +47,7 @@ struct AudioPacket {
         }
 
         self.sessionID = sessionID
+        self.streamID = streamID
         self.sequenceNumber = sequenceNumber
         self.sampleRate = sampleRate
         self.channels = channels

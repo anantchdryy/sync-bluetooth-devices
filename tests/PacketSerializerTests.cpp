@@ -31,6 +31,7 @@ AudioPacket makePacket() {
   AudioPacket packet;
   packet.flags = 0x1234;
   packet.sessionId = 0x0102030405060708ULL;
+  packet.streamId = 0x01020304U;
   packet.sequenceNumber = 0x11223344U;
   packet.sampleRate = 48'000;
   packet.channelCount = 2;
@@ -52,7 +53,7 @@ void testRoundTripAndByteOrder() {
   require(encoded[0] == std::byte{'S'} && encoded[1] == std::byte{'A'} &&
               encoded[2] == std::byte{'U'} && encoded[3] == std::byte{'D'},
           "Packet magic is incorrect");
-  require(encoded[4] == std::byte{1} && encoded[5] == std::byte{48},
+  require(encoded[4] == std::byte{2} && encoded[5] == std::byte{52},
           "Version or header size is incorrect");
   require(encoded[6] == std::byte{0x12} && encoded[7] == std::byte{0x34},
           "16-bit field is not big-endian");
@@ -60,6 +61,8 @@ void testRoundTripAndByteOrder() {
           "64-bit field is not big-endian");
   require(encoded[16] == std::byte{0x11} && encoded[19] == std::byte{0x44},
           "32-bit field is not big-endian");
+  require(encoded[48] == std::byte{0x01} && encoded[51] == std::byte{0x04},
+          "Stream ID is not big-endian");
 
   const auto decoded = PacketSerializer::deserialize(encoded);
   require(decoded.protocolVersion == packet.protocolVersion,
@@ -67,6 +70,8 @@ void testRoundTripAndByteOrder() {
   require(decoded.flags == packet.flags, "Flags did not round-trip");
   require(decoded.sessionId == packet.sessionId,
           "Session ID did not round-trip");
+  require(decoded.streamId == packet.streamId,
+          "Stream ID did not round-trip");
   require(decoded.sequenceNumber == packet.sequenceNumber,
           "Sequence number did not round-trip");
   require(decoded.sampleRate == packet.sampleRate,
@@ -86,12 +91,12 @@ void testRoundTripAndByteOrder() {
 
 void testMaximumPacket() {
   auto packet = makePacket();
-  packet.frameCount = 288;
+  packet.frameCount = 287;
   packet.pcmPayload.assign(PacketSerializer::MaximumPayloadSize, std::byte{0});
   const auto encoded = PacketSerializer::serialize(packet);
   require(encoded.size() == PacketSerializer::MaximumDatagramSize,
           "Maximum packet does not match the datagram limit");
-  require(PacketSerializer::deserialize(encoded).frameCount == 288,
+  require(PacketSerializer::deserialize(encoded).frameCount == 287,
           "Maximum packet failed to decode");
 }
 
@@ -111,7 +116,7 @@ void testInvalidPackets() {
       "Invalid magic must be rejected");
 
   auto badVersion = makePacket();
-  badVersion.protocolVersion = 2;
+  badVersion.protocolVersion = 3;
   requireInvalid(
       [&] { static_cast<void>(PacketSerializer::serialize(badVersion)); },
       "An unsupported protocol version must be rejected");

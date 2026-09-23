@@ -138,7 +138,7 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
   }
 
   DesktopNetworkHostStats stats;
-  stats.sessionId = createSessionId();
+  stats.sessionId = config_.sessionId != 0 ? config_.sessionId : createSessionId();
   stats.framesPerPacket = static_cast<std::uint16_t>(framesPerPacket);
   stats.packetDurationMilliseconds = 1'000.0 *
                                      static_cast<double>(framesPerPacket) /
@@ -185,6 +185,9 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
     ++stats.packetsSent;
     stats.framesSent += framesRead;
     startFrame += framesRead;
+    if (config_.progressFrame) {
+      config_.progressFrame->store(startFrame, std::memory_order_release);
+    }
   }
 
   return stats;

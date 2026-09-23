@@ -29,10 +29,13 @@ add_subdirectory(core)
 
 add_library(desktop_transport STATIC
     desktop/src/ClockSyncTransport.cpp
+    desktop/src/ControlChannel.cpp
+    desktop/src/DiscoveryService.cpp
     desktop/src/UdpAudioReceiver.cpp
     desktop/src/UdpAudioSender.cpp
 )
 target_include_directories(desktop_transport PUBLIC desktop/include)
+target_include_directories(desktop_transport SYSTEM PRIVATE desktop/third_party)
 target_link_libraries(desktop_transport PUBLIC syncaudio_core)
 target_compile_features(desktop_transport PUBLIC cxx_std_20)
 if(WIN32)
@@ -88,6 +91,11 @@ enable_project_warnings(desktop_audio_client)
 enable_project_warnings(syncaudio)
 
 if(BUILD_TESTING)
+    add_executable(control_channel_tests tests/ControlChannelTests.cpp)
+    target_link_libraries(control_channel_tests PRIVATE desktop_transport)
+    enable_project_warnings(control_channel_tests)
+    add_test(NAME control_channel_tests COMMAND control_channel_tests)
+
     add_executable(desktop_transport_tests tests/DesktopTransportTests.cpp)
     target_link_libraries(desktop_transport_tests PRIVATE desktop_transport)
     enable_project_warnings(desktop_transport_tests)
