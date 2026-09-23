@@ -1,119 +1,19 @@
-# iPhone packet receiver and playback
+# Tandem Audio for iPhone
 
-`SyncAudioReceiver.xcodeproj` is an iPhone app with a small SwiftUI screen. It
-uses Network.framework to listen for the desktop host's `SAUD` UDP packets and
-AVAudioEngine to play signed 16-bit PCM. The player converts interleaved PCM to
-floating point, reorders packets by frame index, conceals missing frames with
-silence, and starts after about 180 ms has accumulated. It targets about 250 ms
-of scheduled audio. The receive buffer retains up to about 500 ms of PCM for
-statistics; its displayed depth is separate from queued playback audio.
+The iPhone app uses SwiftUI, Network.framework, AVAudioSession, and AVAudioEngine. It discovers a nearby Windows room with Bonjour, joins through TCP, receives PCM UDP packets, estimates the host clock with `SCLK` probes, and schedules audio with a bounded jitter queue. Home, Room, Device, and Settings screens keep timing details under Developer Diagnostics.
 
-## Xcode and device setup
+## Build and install
 
-1. On a Mac with Xcode installed, open `ios/SyncAudioReceiver.xcodeproj`.
-2. Select the **SyncAudioReceiver** target, open **Signing & Capabilities**, and
-   choose your Apple development team. If Xcode reports a bundle identifier
-   conflict, change `com.anantchdryy.SyncAudioReceiver` to an identifier owned
-   by your team. Leave **Automatically manage signing** enabled.
-3. Connect an iPhone, trust the Mac if asked, select the phone as the run
-   destination, and press **Run**. Xcode may ask you to enable Developer Mode on
-   the phone. The project targets iOS 16 or later.
-4. When you tap **Start Listening**, allow the local-network permission prompt.
-   The purpose string is in `SyncAudioReceiver/Info.plist`. If permission was
-   previously denied, enable it in iPhone **Settings → Privacy & Security →
-   Local Network**.
+On a Mac with a compatible Xcode version, open `SyncAudioReceiver.xcodeproj`, choose the `SyncAudioReceiver` target, select your Apple development team under Signing & Capabilities, and change `com.anantchdryy.SyncAudioReceiver` if that identifier is unavailable to your team. Connect and trust your iPhone, enable Developer Mode if prompted, select it as destination, and press Run. The project targets iOS 16 or later. A free Apple Account can sign for personal device testing, with periodic reprovisioning. See [building](../docs/BUILDING.md).
 
-The shared scheme includes unit tests. On a Mac, select an iPhone simulator and
-run **Product → Test**, or run:
+Allow Local Network access when prompted. If denied, turn it on in iPhone Settings > Privacy & Security > Local Network. The app does not use the microphone or manage Bluetooth pairing. It declares background audio and observes interruptions and output-route changes. A Bluetooth speaker must be paired and selected through iOS.
 
-```sh
-xcodebuild -project ios/SyncAudioReceiver.xcodeproj \
-  -scheme SyncAudioReceiver \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  CODE_SIGNING_ALLOWED=NO test
-```
+## Use
 
-Choose an installed simulator name if `iPhone 16` is unavailable. A physical
-iPhone is required to validate desktop-to-phone Wi-Fi delivery.
+Connect the Windows PC and iPhone to the same non-isolated LAN. Start the Windows Tandem Audio app, choose a PCM WAV file, and create a room. On iPhone, complete the short first-run screen, tap the room under Nearby Rooms, and join. The Room screen shows playback and connection state; Device shows the output route; Settings has route adjustment and Developer Diagnostics. If discovery fails, Developer Diagnostics offers manual host IPv4 and ports. Defaults are audio UDP 40100, clock UDP 40101, and TCP session 40102.
 
-## Receive from the desktop
+The app starts playback only after it has a clock sample and enough queued audio. The startup queue is around 180 ms and adapts to network jitter. It reports packet counts, loss, buffer depth, output pipeline estimate, and estimated sync error under Developer Diagnostics. These are software estimates, not an acoustic measurement. Export diagnostics JSON after each test; see [testing](../docs/TESTING.md).
 
-1. Connect the desktop and iPhone to the same Wi-Fi/LAN. Find the desktop's
-   IPv4 address and the iPhone's IPv4 address in their network settings.
-2. In the iPhone app, select the desktop under **Nearby hosts**. Bonjour uses
-   `_tandemaudio._tcp` and the host's TCP session port `40102`. For debugging,
-   enter the host IPv4 address, audio UDP port `40100`, clock UDP port `40101`,
-   and session TCP port `40102` manually. Leave the app in the foreground.
-   Allow these ports and mDNS UDP `5353` through the desktop firewall.
-3. On the desktop, build the repository as described in the root README. Run
-   the host with the **iPhone's IPv4 address** as its destination:
+Changing the output route clears queued playback and re-buffers. The route-specific manual adjustment is stored by port UID and is not copied to a new route. This is manual compensation, not automatic microphone calibration. See [output latency](../docs/OUTPUT_LATENCY.md).
 
-   ```powershell
-   .\build\Release\syncaudio.exe host "C:\path\to\file.wav" --port 40100 --control-port 40101 --session-port 40102
-   ```
-
-   The default audio destination is LAN broadcast. For a direct stream, add
-   `--address <iphone-ipv4>`. Permit private-network traffic through the desktop
-   firewall if prompted.
-4. The app changes from **Waiting for host packets** to **Receiving** and shows
-   the latest sequence number, packets per second, estimated packet loss,
-   sample rate, channel count, receive buffer depth, playback queue depth,
-   underruns, concealed frames, and device output pipeline latency. Audio begins
-   when the playback state reads **Playing**. Tap **Stop Listening**
-   to release the UDP socket. The app also stops listening when backgrounded.
-
-The host IP field filters incoming datagrams; UDP has no persistent connection.
-If the app stays on **Waiting for host packets**, check both IP addresses, the
-port, local-network permission, firewall, and whether the host command is
-running. Start the phone listener before starting the host so it sees the
-beginning of the stream.
-
-## Playback latency and validation
-
-The startup queue begins near 180 ms and adapts between 120 and 350 ms as
-arrival jitter changes. The app reports `outputLatency + ioBufferDuration` from
-AVAudioSession as **Output pipeline**; that API estimate may differ from the
-physical speaker or Bluetooth accessory delay. Packet transit time and scheduling also contribute to end-to-end
-latency. These are design targets and API values, not measured acoustic latency.
-The iOS Simulator build and converter/queue tests verify software paths. To
-verify actual audio, run on an iPhone, play an audible WAV on the desktop host,
-and listen on the phone. Record the playback state, underrun count, output
-pipeline value, and whether audio is uninterrupted for at least one minute.
-
-## Synchronization
-
-The iPhone sends `SCLK` probes to the desktop host's control port. Each probe
-returns host receive and send timestamps. The app computes host minus iPhone
-clock offset and network RTT using the four timestamps, then chooses the median
-offset of the three recent lowest-RTT samples. It continues probing every five seconds after the
-initial eight responses. It waits for a valid clock sample before playing.
-
-Each audio packet carries the host time when its first frame should play. The
-iPhone translates that time to its local monotonic clock and schedules the
-AVAudioPlayerNode start at that time plus a 20 ms safety delay, less the audio
-session's reported output pipeline latency. Packets arriving too late for a
-100 ms scheduling lead are skipped before playback starts. The UI shows host
-offset, RTT, queued audio, presentation delay, and estimated sync error. Xcode's
-console logs those values once per second while playing.
-
-**Estimated sync error** compares the player node's render position with the
-scheduled start and latest clock offset. It is an engine timing estimate, not a
-microphone or acoustic measurement. Output latency reported by the system can
-differ from the physical speaker path, especially with Bluetooth accessories.
-The approximately 20 ms audible target therefore needs a physical two-device
-measurement. To measure it, record both the desktop output and iPhone speaker
-with a common recorder or calibrated microphones, correlate a transient in the
-two waveforms, and compare their event times. Save the iPhone's console lines
-and route/output latency alongside that result. The repository's simulator
-tests validate the protocol math and scheduling arithmetic only.
-
-## Route-specific manual calibration
-
-The app displays the current output route and keeps a manual adjustment from
-−1000 to +1000 ms under that route's system UID. Release the slider to
-re-buffer using the new value. Changing from built-in audio to wired or
-Bluetooth output reloads the adjustment for the new route and restarts the
-playback buffer. Use a shared recording of short clicks to choose the value;
-the system estimate is not an acoustic measurement. The **Share diagnostics
-JSON** control exports the current route, adjustment, packet and clock stats.
-See [output latency](../docs/OUTPUT_LATENCY.md) for the measurement procedure.
+The shared Xcode scheme runs parser and playback logic tests in an iPhone simulator. The repository's GitHub Actions workflow builds and tests it. A physical iPhone is required to verify sound, Wi-Fi recovery, background playback, Bluetooth behavior, and acoustic alignment.

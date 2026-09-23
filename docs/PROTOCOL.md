@@ -1,0 +1,7 @@
+# Wire protocol
+
+See the exact `SAUD` version 2, 52-byte header table in the [README](../README.md). Headers are network byte order; PCM is signed 16-bit little-endian; datagrams are capped at 1,200 bytes. Receivers reject invalid version, length, format, timestamp/frame relationships, stream/session identity, and payload bounds. The protocol does not encrypt or authenticate LAN traffic; use a trusted private network.
+
+TCP control is line-oriented ASCII with a 256-byte bound. Clients send `JOIN <device-id>`, receive `WELCOME` with session, stream, ports, sample rate, channels, and host IPv4, then send state and `LEAVE` as appropriate. The desktop host accepts play/pause/seek/stop control on its loopback interface; room commands are scheduled ahead and carry an effective host time. `MEMBERS` is loopback-only and supplies the desktop shell's device list. Unknown commands receive an error. See [rooms](ROOMS.md) for exact room behavior.
+
+`SCLK` UDP probes use four timestamps: client send, host receive, host send, client receive. The client calculates round-trip time and host minus client offset. Repeated low-RTT samples reduce queueing bias; drift estimation tracks offset slope over time. DNS-SD advertises `_tandemaudio._tcp.local.` for local room discovery. Transport ports are audio UDP 40100, clock UDP 40101, session TCP 40102, and mDNS UDP 5353 by default. LAN multicast or firewall restrictions can prevent discovery independently of direct transport.

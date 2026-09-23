@@ -1,12 +1,26 @@
 # Tandem Audio
 
-Tandem Audio streams PCM audio from a Windows desktop to another desktop or an
-iPhone over a local network. The desktop host plays a WAV file locally while
-sending timestamped UDP packets. Clients use clock probes, a jitter buffer,
-and scheduled playback to align with the host. The iPhone app shows packet,
-playback, and synchronization diagnostics. Bluetooth management and compressed
-audio are not implemented. Physical iPhone playback and acoustic alignment
-still require device testing; simulator tests alone cannot verify them.
+Tandem Audio turns nearby Windows computers and iPhones into speakers for the
+same WAV file over a local Wi-Fi/LAN. Open the Windows app, create a room, and
+join it from another device. The host plays locally and sends timestamped audio
+to each client. Clients use clock probes, a jitter buffer, and scheduled
+playback to align with the host. Physical iPhone playback and acoustic
+alignment still require device testing; simulator tests cannot verify them.
+
+## Install and use
+
+Install the Windows x64 build with the `TandemAudio-0.14.0-win-x64-setup.exe`
+artifact, then launch **Tandem Audio** from Start. Choose a PCM WAV file,
+name a room, and press **Create Room**. Other Windows instances can discover
+and join it. On iPhone, build and install `ios/SyncAudioReceiver.xcodeproj`
+through Xcode, allow Local Network access, and tap the nearby room to join.
+Both devices need to be on the same non-isolated LAN. See [building](docs/BUILDING.md),
+[testing](docs/TESTING.md), [troubleshooting](docs/TROUBLESHOOTING.md), and
+[known limitations](docs/KNOWN_LIMITATIONS.md).
+
+Bluetooth is an output route managed by the OS; Tandem Audio uses Wi-Fi for
+the inter-device link. Compressed audio and system-audio capture are not yet
+implemented. The CLI remains available for automation and diagnostics.
 
 For iPhone setup and measurement guidance, see [ios/README.md](ios/README.md).
 For room creation, multiple clients, and scheduled controls, see
@@ -69,8 +83,9 @@ integer conversion arithmetic, and never depends on the system/wall clock.
 
 `DesktopAudioPlayer` exposes the current timeline frame, that frame's expected
 timestamp, and elapsed playback time. The current estimate is capped at audio
-frames already submitted to miniaudio. This phase does not yet compensate for
-audio-driver, device, wired, or Bluetooth output latency.
+frames already submitted to miniaudio. Route output delay can be adjusted
+manually; physical output latency remains unmeasured. See
+[output latency](docs/OUTPUT_LATENCY.md).
 
 ## UDP host
 

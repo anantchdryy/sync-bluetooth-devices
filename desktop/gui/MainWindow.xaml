@@ -4,6 +4,7 @@
         Title="Tandem Audio" Width="920" Height="640" MinWidth="740" MinHeight="520"
         Background="#101827" Foreground="#F4F7FB" FontFamily="Segoe UI">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
         <Style TargetType="Button">
             <Setter Property="Background" Value="#2B4057"/>
             <Setter Property="Foreground" Value="White"/>
@@ -68,7 +69,7 @@
             <TabItem Header="Devices">
                 <StackPanel Margin="24">
                     <TextBlock Text="Connected devices" FontSize="24" FontWeight="SemiBold"/>
-                    <TextBlock Text="Each device keeps its own clock and buffer estimate." Foreground="#A9B7C7" Margin="0,8,0,18"/>
+                    <TextBlock Text="See which devices are playing with your room." Foreground="#A9B7C7" Margin="0,8,0,18"/>
                     <ListView x:Name="DevicesList" Background="#26364C" Foreground="White" BorderThickness="0">
                         <ListView.View><GridView>
                             <GridViewColumn Header="Device" Width="220" DisplayMemberBinding="{Binding Name}"/>
@@ -82,11 +83,13 @@
             <TabItem Header="Settings">
                 <StackPanel Margin="24">
                     <TextBlock Text="Audio and network" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
-                    <TextBlock Text="Output delay adjustment (milliseconds)" Margin="0,0,0,6"/>
-                    <TextBox x:Name="OutputLatencyBox" Text="0" Width="100" HorizontalAlignment="Left"/>
-                    <TextBlock Text="Use a shared click recording to adjust the physical speaker delay." Foreground="#A9B7C7" Margin="0,7,0,20"/>
                     <CheckBox x:Name="DeveloperModeBox" Content="Developer diagnostics" Margin="0,0,0,10"/>
-                    <Button Content="Open diagnostics folder" Click="OpenDiagnostics_Click" HorizontalAlignment="Left"/>
+                    <StackPanel Visibility="{Binding IsChecked, ElementName=DeveloperModeBox, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="Output delay adjustment (milliseconds)" Margin="0,0,0,6"/>
+                        <TextBox x:Name="OutputLatencyBox" Text="0" Width="100" HorizontalAlignment="Left"/>
+                        <TextBlock Text="Use a shared click recording to adjust the physical speaker delay." Foreground="#A9B7C7" Margin="0,7,0,20"/>
+                        <Button Content="Open diagnostics folder" Click="OpenDiagnostics_Click" HorizontalAlignment="Left"/>
+                    </StackPanel>
                     <TextBlock Text="Allow Tandem Audio on private networks if Windows Firewall asks." Foreground="#A9B7C7" Margin="0,20,0,0"/>
                 </StackPanel>
             </TabItem>
