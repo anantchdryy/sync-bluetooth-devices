@@ -1,9 +1,14 @@
-# SyncAudio
+# Tandem Audio
 
-The project currently contains local WAV playback, a reusable monotonic
-playback timeline, a UDP desktop host, and a scheduled desktop client with a
-basic jitter buffer and gradual clock-drift correction. Bluetooth management,
-compression, GUI, and iPhone support are intentionally not implemented yet.
+Tandem Audio streams PCM audio from a Windows desktop to another desktop or an
+iPhone over a local network. The desktop host plays a WAV file locally while
+sending timestamped UDP packets. Clients use clock probes, a jitter buffer,
+and scheduled playback to align with the host. The iPhone app shows packet,
+playback, and synchronization diagnostics. Bluetooth management and compressed
+audio are not implemented. Physical iPhone playback and acoustic alignment
+still require device testing; simulator tests alone cannot verify them.
+
+For iPhone setup and measurement guidance, see [ios/README.md](ios/README.md).
 
 ## Requirements
 
