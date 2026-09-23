@@ -19,7 +19,9 @@ section is inferred from a simulator or from host-side loopback traffic.
 | Room model and control protocol | local Windows Debug/Release | PASS | `room_tests`, `control_channel_tests` |
 | 1/2/5/10 room clients | local Windows loopback, 8 kHz mono | PASS, 25 received packets per client | `room_transport_tests`; see [rooms](ROOMS.md) |
 | Pause, resume, seek, stop | local Windows Debug, 40-second silent WAV | PASS, four scheduled commands and clean stop | CLI host/control run; iPhone acoustic response unmeasured |
-| iPhone simulator compile/unit tests | macOS GitHub Actions | PENDING Phase 13 run | Actions workflow |
+| iPhone simulator compile/unit tests | macOS GitHub Actions, Phase 14 commit `a82e611` | PASS | Actions workflow |
+| Windows Release C++ tests | GitHub Actions, Phase 14 commit `a82e611` | PASS, 14 CTest targets | Actions workflow |
+| Desktop DNS-SD discovery | local Windows Wi-Fi interface with virtual adapters | PASS, found `Smoke Room` at `172.31.153.232:40102` | 20-second host and C# browser smoke; not a second device |
 
 These tests verify deterministic packet handling and bounds. They do not
 measure sound from a physical speaker or iOS recovery after a real outage.

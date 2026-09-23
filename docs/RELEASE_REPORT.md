@@ -10,7 +10,7 @@ See [architecture](ARCHITECTURE.md), [Wi-Fi transport](WIFI_ARCHITECTURE.md), [p
 
 ## Tested on real hardware
 
-The development Windows PC built Debug and Release C++ targets, passed all 14 CTest targets in each configuration, built the Release WPF app, and produced the installer. A local Windows loopback run joined a room and received 750 packets with 0% estimated loss; it did not involve a second speaker or real Wi-Fi path. A silent installer run placed the two executables and license in a temporary directory; the engine launched and the silent uninstaller exited with code 0 and removed the directory. This is local installation smoke testing, not a clean independent PC test.
+The development Windows PC built Debug and Release C++ targets, passed all 14 CTest targets in each configuration, built the Release WPF app, and produced the installer. A local Windows loopback run joined a room and received 750 packets with 0% estimated loss; it did not involve a second speaker or real Wi-Fi path. A desktop DNS-SD browser smoke found a room advertised on the host's Wi-Fi interface despite multiple virtual adapters. A silent installer run placed the two executables and license in a temporary directory; the engine launched and the silent uninstaller exited with code 0 and removed the directory. These are same-PC checks, not a clean independent PC or phone test.
 
 No physical iPhone playback or acoustic synchronization measurement has been performed. No iPhone speaker, wired accessory, Bluetooth accessory, or second Windows machine has been tested.
 
@@ -18,7 +18,7 @@ No physical iPhone playback or acoustic synchronization measurement has been per
 
 The local Release suite passed 14/14 CTests, including packet parsing, clock synchronization, drift correction, jitter buffering, output latency math, network impairment, reliability stress, room state/control, and 1/2/5/10-client loopback delivery. The seeded impairment test covers 100 loss/jitter/delay combinations, blackouts up to 5 seconds, duplication, and reordering. The stress test covers clock rates from -500 to +500 ppm and 20,000 malformed datagrams. At 8 kHz mono, the 10-client short loopback run delivered 250 datagrams / 53,000 payload bytes and reported 0.241 CPU seconds and 7.09 MiB process working set on the development PC; this is a short local microbenchmark, not a Wi-Fi performance result. Details are in [test matrix](TEST_MATRIX.md) and [rooms](ROOMS.md).
 
-GitHub Windows and macOS/iPhone simulator workflows passed on the Phase 14 UI commit `9696473`. The icon/asset changes need a fresh CI run after this commit. Simulator compile/tests do not exercise physical speaker timing, LAN discovery across devices, or background audio on a real iPhone.
+GitHub Windows and macOS/iPhone simulator workflows passed on the Phase 14 icon/asset commit `a82e611`. Simulator compile/tests do not exercise physical speaker timing, LAN discovery across devices, or background audio on a real iPhone.
 
 ## Not yet tested
 

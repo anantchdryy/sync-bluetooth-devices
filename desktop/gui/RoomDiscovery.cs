@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 
@@ -19,6 +20,7 @@ internal sealed class RoomDiscovery : IDisposable
     private readonly Dictionary<string, string> addresses = [];
     private readonly Dictionary<string, string> identifiers = [];
     private UdpClient? socket;
+    private IReadOnlyList<IPAddress> interfaces = [];
 
     public event Action<IReadOnlyList<DiscoveredRoom>>? RoomsChanged;
     public event Action<string>? StatusChanged;
@@ -31,11 +33,18 @@ internal sealed class RoomDiscovery : IDisposable
             socket = new UdpClient(AddressFamily.InterNetwork);
             socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             socket.Client.Bind(new IPEndPoint(IPAddress.Any, 5353));
-            socket.JoinMulticastGroup(Multicast.Address);
+            RefreshInterfaces();
             var lastQuery = DateTime.MinValue;
             while (!token.IsCancellationRequested) {
                 if (DateTime.UtcNow - lastQuery >= TimeSpan.FromSeconds(10)) {
-                    await socket.SendAsync(Query(), Multicast, token);
+                    RefreshInterfaces();
+                    foreach (var address in interfaces) {
+                        try {
+                            socket.Client.SetSocketOption(SocketOptionLevel.IP,
+                                SocketOptionName.MulticastInterface, address.GetAddressBytes());
+                            await socket.SendAsync(Query(), Multicast, token);
+                        } catch (SocketException) { /* Try other active interfaces. */ }
+                    }
                     lastQuery = DateTime.UtcNow;
                     Expire();
                 }
@@ -48,6 +57,27 @@ internal sealed class RoomDiscovery : IDisposable
             }
         } catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error) { StatusChanged?.Invoke($"Discovery unavailable: {error.Message}"); }
+    }
+
+    private void RefreshInterfaces()
+    {
+        if (socket is null) return;
+        var active = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(nic => nic.OperationalStatus == OperationalStatus.Up &&
+                          nic.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                          nic.SupportsMulticast)
+            .SelectMany(nic => nic.GetIPProperties().UnicastAddresses)
+            .Select(entry => entry.Address)
+            .Where(address => address.AddressFamily == AddressFamily.InterNetwork &&
+                              !IPAddress.IsLoopback(address) &&
+                              !address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+            .Distinct().ToArray();
+        foreach (var address in active.Except(interfaces)) {
+            try { socket.JoinMulticastGroup(Multicast.Address, address); }
+            catch (SocketException) { /* One unavailable adapter must not hide other rooms. */ }
+        }
+        interfaces = active;
+        if (active.Length == 0) StatusChanged?.Invoke("No active LAN connection found.");
     }
 
     private static byte[] Query()

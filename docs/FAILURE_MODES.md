@@ -35,16 +35,16 @@ recover audio if the host itself has stopped broadcasting.
 | Audio interruption | call/audio focus | playback halts | AVAudioSession notification | stop engine and rebuffer on end | waiting for audio | state, underruns | simulate call/Siri |
 | CPU overload | callback misses | stutter | underrun count | rebuffer | unstable | CPU external, underruns | synthetic CPU load |
 | Laptop sleep/wake | host clock/network stop | stream disappears | control and packet timeout | clients retry; host restart may be required | reconnecting | state, session | sleep/wake laptop |
-| Phone lock/unlock | lifecycle/audio policy | playback stops | scene phase/interruption | app stops in background today; foreground requires user restart | Start Listening | lifecycle, state | lock/unlock phone |
-| iOS background/foreground | app suspended | no stream | scene phase | current app stops in background | start again in foreground | state | background 30 s |
+| Phone lock/unlock | lifecycle/audio policy | audio may pause | interruption/packet state | background audio is declared; physical behavior unverified | reopen room if needed | playback state | lock/unlock phone |
+| iOS background/foreground | OS audio policy | stream may pause | interruption/packet state | background audio is declared; physical behavior unverified | reopen room if needed | state | background 30 s |
 | Local Network denied | permission | no discovery/socket | NWBrowser/NWConnection error | cannot auto-grant | enable in Settings | discovery/control error | deny permission |
 | Incoming call/focus interruption | OS session | audio pauses | interruption notification | engine reset after interruption | buffering | interruption state | place call |
 | Bad clock sample | queue asymmetry/outlier | offset jump | RTT and residual filter | low-RTT median, regression outlier reject | quality Fair | RTT, offset, quality | inject clock outlier |
 | Asymmetric latency | paths differ | biased sync | cannot infer from 4 timestamps alone | none; calibration needed | manual calibration | RTT, offset, sync estimate | delay one direction |
 | Clock drift | different oscillators | gradual separation | regression slope | bounded ratio correction on desktop | none | drift ppm, ratio | simulate ±10…500 ppm |
 | Sudden clock offset | clock source change | scheduler skew | repeated residual outliers | reset estimator after 3; iOS rejoin still needs validation | syncing | offset, quality | inject persistent 30 ms step |
-| Host pause/resume | transport lacks scheduled commands | playback inconsistent | control state | not implemented (Phase 13) | restart stream | playback state | pause host |
-| Seek | transport lacks scheduled seek | wrong position | stream position discontinuity | not implemented (Phase 13) | restart stream | frame, session | seek host |
+| Host pause/resume | scheduled command lost or delayed | playback inconsistent | pending control state | host broadcasts effective time; client schedules transition | use room controls again | playback state | pause/resume host |
+| Seek | late packet from old segment | wrong position | stream ID validation | seek rotates stream ID and re-buffers | use room seek again | frame, stream | seek host |
 | Mid-song join | client joins late | misses beginning | WELCOME/current UDP | discard expired frames; buffer current | buffering | host frame, depth | join at 50% |
 | Mid-song reconnect | transport returns | current position changed | fresh WELCOME/session | reset clock/queue, rebuffer live packets | reconnecting | session/frame | interrupt Wi-Fi mid-song |
 | Host restart | new session ID | stale packets | session/stream validation | reset and rejoin | reconnecting | session ID | restart host |
@@ -55,7 +55,7 @@ recover audio if the host itself has stopped broadcasting.
 The retry path is implemented in the iPhone control channel, but physical
 Wi-Fi handoff, lock/background behavior, and acoustic recovery time have not
 been measured. TCP JOIN currently accepts any LAN client with a syntactically
-valid device ID; room authorization belongs to Phase 13. Windows output-route
+valid device ID; authenticated room admission is future work. Windows output-route
 changes reported by miniaudio stop the stream and require a restart with a
 route-appropriate calibration; automatic desktop rebuffering is not
 implemented. Some backends do not report reroutes.
