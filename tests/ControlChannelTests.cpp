@@ -3,6 +3,8 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#include <chrono>
+#include <thread>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -73,4 +75,14 @@ int main() {
           "Unsupported command was not rejected");
   require(exchange(socket, "LEAVE\n") == "BYE\n", "LEAVE failed");
   closeSocket(socket);
+  for (int attempt = 0; attempt < 40; ++attempt) {
+    const auto reconnect = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    require(connect(reconnect, reinterpret_cast<const sockaddr *>(&address),
+                    sizeof(address)) == 0, "Repeated control connect failed");
+    require(exchange(reconnect, "JOIN test-device\n").starts_with("WELCOME "),
+            "Reconnect was not admitted");
+    require(exchange(reconnect, "LEAVE\n") == "BYE\n", "Reconnect leave failed");
+    closeSocket(reconnect);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
 }

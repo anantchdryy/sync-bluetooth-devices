@@ -44,6 +44,8 @@ final class HostControlChannel {
     private var generation = 0
     private var desiredEndpoint: NWEndpoint?
     private var retryAttempt = 0
+    private var awaitingWelcomeSeconds = 0
+    private var joinedSessionID: UInt64?
     private var input = Data()
     private let deviceID: String = {
         if let saved = UserDefaults.standard.string(forKey: "TandemAudio.deviceID") {
@@ -71,6 +73,8 @@ final class HostControlChannel {
             retryTimer?.cancel()
             retryTimer = nil
             generation += 1
+            awaitingWelcomeSeconds = 0
+            joinedSessionID = nil
             let currentGeneration = generation
             let connection = NWConnection(to: endpoint, using: .tcp)
             self.connection = connection
@@ -78,7 +82,6 @@ final class HostControlChannel {
                 guard let self, self.generation == currentGeneration else { return }
                 switch state {
                 case .ready:
-                    self.retryAttempt = 0
                     self.onState?("Connected to host")
                     self.send("JOIN \(self.deviceID)")
                     self.receive(generation: currentGeneration)
@@ -134,9 +137,19 @@ final class HostControlChannel {
     }
 
     private func handle(_ line: String) {
-        if let welcome = HostWelcome(line: line) { onWelcome?(welcome) }
-        else if line.hasPrefix("HOST_STATE ") { onState?(line) }
-        else if line.hasPrefix("ERROR ") { onState?(line) }
+        if let welcome = HostWelcome(line: line) {
+            retryAttempt = 0
+            joinedSessionID = welcome.sessionID
+            onWelcome?(welcome)
+        } else if line.hasPrefix("HOST_STATE ") {
+            let fields = line.split(separator: " ")
+            if fields.count == 4, let session = UInt64(fields[2]),
+               session != joinedSessionID {
+                scheduleRetry(reason: "Host session changed")
+            } else { onState?(line) }
+        } else if line.hasPrefix("ERROR ") {
+            scheduleRetry(reason: "Host rejected session")
+        }
     }
 
     private func startTimer(generation: Int) {
@@ -144,6 +157,13 @@ final class HostControlChannel {
         timer.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
         timer.setEventHandler { [weak self] in
             guard let self, self.generation == generation else { return }
+            if self.joinedSessionID == nil {
+                self.awaitingWelcomeSeconds += 1
+                if self.awaitingWelcomeSeconds >= 3 {
+                    self.scheduleRetry(reason: "Host did not complete JOIN")
+                    return
+                }
+            }
             self.send("HOST_STATE")
         }
         self.timer = timer

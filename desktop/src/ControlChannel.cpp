@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -135,7 +136,7 @@ public:
   ~Impl() {
     stop_.store(true, std::memory_order_release);
     if (acceptThread_.joinable()) acceptThread_.join();
-    for (auto &thread : clients_) if (thread.joinable()) thread.join();
+    for (auto &client : clients_) if (client.thread.joinable()) client.thread.join();
     closeSocket(listener_);
 #ifdef _WIN32
     WSACleanup();
@@ -147,6 +148,12 @@ public:
 private:
   void acceptLoop() {
     while (!stop_.load(std::memory_order_acquire)) {
+      for (auto iterator = clients_.begin(); iterator != clients_.end();) {
+        if (!iterator->active->load(std::memory_order_acquire)) {
+          if (iterator->thread.joinable()) iterator->thread.join();
+          iterator = clients_.erase(iterator);
+        } else ++iterator;
+      }
       fd_set readable;
       FD_ZERO(&readable);
       FD_SET(listener_, &readable);
@@ -169,12 +176,18 @@ private:
         closeSocket(client);
         continue;
       }
-      clients_.emplace_back(&Impl::serveClient, this, client);
+      auto active = std::make_shared<std::atomic_bool>(true);
+      clients_.push_back(ClientWorker{
+          std::thread(&Impl::serveClient, this, client, active), active});
     }
   }
 
-  void serveClient(Socket socket) {
-    try { receiveTimeout(socket); } catch (...) { closeSocket(socket); return; }
+  void serveClient(Socket socket, std::shared_ptr<std::atomic_bool> active) {
+    try { receiveTimeout(socket); } catch (...) {
+      closeSocket(socket);
+      active->store(false, std::memory_order_release);
+      return;
+    }
     std::string line;
     line.reserve(256);
     while (!stop_.load(std::memory_order_acquire)) {
@@ -195,14 +208,20 @@ private:
       }
     }
     closeSocket(socket);
+    active->store(false, std::memory_order_release);
   }
+
+  struct ClientWorker {
+    std::thread thread;
+    std::shared_ptr<std::atomic_bool> active;
+  };
 
   ControlStreamState &state_;
   Socket listener_{invalidSocket};
   std::uint16_t boundPort_{};
   std::atomic_bool stop_{false};
   std::thread acceptThread_;
-  std::vector<std::thread> clients_;
+  std::vector<ClientWorker> clients_;
 };
 
 ControlServer::ControlServer(std::uint16_t port, ControlStreamState &state)
