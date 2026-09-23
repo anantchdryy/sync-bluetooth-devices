@@ -1,0 +1,32 @@
+name: Windows desktop
+
+on:
+  push:
+    paths:
+      - 'core/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Run tests
+        run: ctest --test-dir build -C Release --output-on-failure

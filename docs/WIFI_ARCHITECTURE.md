@@ -75,6 +75,11 @@ rejoin a changed host session. Phase 11 defines the reconnection state machine.
 Host IP changes require rediscovery. Audio callbacks do not perform socket or
 file I/O, but the current desktop jitter-buffer read takes a mutex and the
 desktop host's local playback callback decodes WAV data. These are known
-real-time risks to address with prefilled rings and hardware profiling. CPU,
-memory, bandwidth, underrun, and acoustic sync baselines require device runs;
-none are inferred from simulator builds.
+real-time risks to address with prefilled rings and hardware profiling. A
+six-second, 48 kHz mono WAV streamed to Windows loopback on the development
+machine sent 600 packets and 607,200 audio datagram bytes at 979.11 kbps
+excluding IP/UDP headers. The process used 0.094 CPU-seconds over 7.633
+wall-seconds (1.23% of one core on average) and peaked at 12.85 MiB working
+set. This is a local host sample, not an iPhone Wi-Fi or acoustic result.
+Phase 9 did not record an equivalent baseline, so a sync-performance
+comparison is unavailable rather than inferred.
