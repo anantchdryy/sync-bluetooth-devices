@@ -70,10 +70,10 @@ beginning of the stream.
 
 ## Playback latency and validation
 
-The startup queue target is 180 ms, and the steady scheduled queue target is
-250 ms. The app reports `outputLatency + ioBufferDuration` from AVAudioSession
-as **Output pipeline**; that value excludes speaker or Bluetooth accessory
-delay. Packet transit time and scheduling also contribute to end-to-end
+The startup queue begins near 180 ms and adapts between 120 and 350 ms as
+arrival jitter changes. The app reports `outputLatency + ioBufferDuration` from
+AVAudioSession as **Output pipeline**; that API estimate may differ from the
+physical speaker or Bluetooth accessory delay. Packet transit time and scheduling also contribute to end-to-end
 latency. These are design targets and API values, not measured acoustic latency.
 The iOS Simulator build and converter/queue tests verify software paths. To
 verify actual audio, run on an iPhone, play an audible WAV on the desktop host,
@@ -84,8 +84,8 @@ pipeline value, and whether audio is uninterrupted for at least one minute.
 
 The iPhone sends `SCLK` probes to the desktop host's control port. Each probe
 returns host receive and send timestamps. The app computes host minus iPhone
-clock offset and network RTT using the four timestamps, then chooses the recent
-sample with the lowest RTT. It continues probing every five seconds after the
+clock offset and network RTT using the four timestamps, then chooses the median
+offset of the three recent lowest-RTT samples. It continues probing every five seconds after the
 initial eight responses. It waits for a valid clock sample before playing.
 
 Each audio packet carries the host time when its first frame should play. The
@@ -106,3 +106,14 @@ with a common recorder or calibrated microphones, correlate a transient in the
 two waveforms, and compare their event times. Save the iPhone's console lines
 and route/output latency alongside that result. The repository's simulator
 tests validate the protocol math and scheduling arithmetic only.
+
+## Route-specific manual calibration
+
+The app displays the current output route and keeps a manual adjustment from
+−1000 to +1000 ms under that route's system UID. Release the slider to
+re-buffer using the new value. Changing from built-in audio to wired or
+Bluetooth output reloads the adjustment for the new route and restarts the
+playback buffer. Use a shared recording of short clicks to choose the value;
+the system estimate is not an acoustic measurement. The **Share diagnostics
+JSON** control exports the current route, adjustment, packet and clock stats.
+See [output latency](../docs/OUTPUT_LATENCY.md) for the measurement procedure.
