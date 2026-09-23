@@ -119,6 +119,10 @@ int main() {
           "Second client was not admitted");
   for (int line = 0; line < 3; ++line) (void)readLine(second);
   require(room.snapshot().members.size() == 2, "Concurrent room members missing");
+  require(exchange(first, "MEMBERS\n").starts_with("MEMBER "),
+          "Host member query failed");
+  require(readLine(first).starts_with("MEMBER "), "Second member was not listed");
+  require(readLine(first) == "END\n", "Member list was not terminated");
   require(exchange(first, "CLIENT_STATE SYNCED 2 1 0 180 3 35 20\n") == "OK\n",
           "Client health report failed");
   require(exchange(first, "PLAY\n").starts_with("SCHEDULED PLAY "),

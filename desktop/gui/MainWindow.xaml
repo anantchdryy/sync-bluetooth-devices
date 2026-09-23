@@ -1,0 +1,95 @@
+<Window x:Class="TandemAudio.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tandem Audio" Width="920" Height="640" MinWidth="740" MinHeight="520"
+        Background="#101827" Foreground="#F4F7FB" FontFamily="Segoe UI">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#2B4057"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="16,9"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#26364C"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,8"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel Margin="28">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,20">
+            <TextBlock Text="Tandem Audio" FontSize="30" FontWeight="SemiBold"/>
+            <TextBlock Text="Play together on your nearby devices" Foreground="#A9B7C7" FontSize="15"/>
+        </StackPanel>
+        <TabControl x:Name="Pages" Background="#192438" BorderThickness="0">
+            <TabItem Header="Home">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="24">
+                        <TextBlock Text="Create a room" FontSize="23" FontWeight="SemiBold"/>
+                        <TextBlock Text="Choose a WAV file and play it here and on nearby devices." Foreground="#A9B7C7" Margin="0,6,0,18"/>
+                        <TextBlock Text="Room name" Margin="0,0,0,6"/>
+                        <TextBox x:Name="RoomNameBox" Text="Living Room" MaxLength="48" Width="360" HorizontalAlignment="Left" Margin="0,0,0,14"/>
+                        <TextBlock Text="Music" Margin="0,0,0,6"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                            <TextBox x:Name="TrackPathBox" Width="470" IsReadOnly="True" Text="Choose a WAV file"/>
+                            <Button Content="Browse" Click="BrowseTrack_Click" Margin="10,0,0,0"/>
+                        </StackPanel>
+                        <Button Content="Create Room" Click="CreateRoom_Click" Background="#66DFC1" Foreground="#10241F" HorizontalAlignment="Left"/>
+                        <Separator Margin="0,28"/>
+                        <TextBlock Text="Nearby rooms" FontSize="23" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="DiscoveryStatus" Text="Looking for rooms on this network…" Foreground="#A9B7C7" Margin="0,6,0,12"/>
+                        <ListBox x:Name="RoomsList" Height="140" DisplayMemberPath="DisplayName" Background="#26364C" Foreground="White" BorderThickness="0"/>
+                        <Button Content="Join selected room" Click="JoinRoom_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Room">
+                <StackPanel Margin="24">
+                    <TextBlock x:Name="ActiveRoomName" Text="No room open" FontSize="26" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="CurrentTrack" Text="Choose music on Home to create a room." Foreground="#A9B7C7" Margin="0,8,0,18"/>
+                    <TextBlock x:Name="RoomStatus" Text="Ready" Margin="0,0,0,20"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                        <Button Content="Play" Click="Play_Click"/>
+                        <Button Content="Pause" Click="Pause_Click"/>
+                        <Button Content="Stop" Click="Stop_Click"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Seek to" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox x:Name="SeekSecondsBox" Text="0" Width="90"/>
+                        <TextBlock Text="seconds" VerticalAlignment="Center" Margin="8,0"/>
+                        <Button Content="Seek" Click="Seek_Click"/>
+                    </StackPanel>
+                    <TextBlock Text="Controls are scheduled for all room members at the same host time." Foreground="#A9B7C7" Margin="0,22,0,0"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem Header="Devices">
+                <StackPanel Margin="24">
+                    <TextBlock Text="Connected devices" FontSize="24" FontWeight="SemiBold"/>
+                    <TextBlock Text="Each device keeps its own clock and buffer estimate." Foreground="#A9B7C7" Margin="0,8,0,18"/>
+                    <ListView x:Name="DevicesList" Background="#26364C" Foreground="White" BorderThickness="0">
+                        <ListView.View><GridView>
+                            <GridViewColumn Header="Device" Width="220" DisplayMemberBinding="{Binding Name}"/>
+                            <GridViewColumn Header="State" Width="140" DisplayMemberBinding="{Binding State}"/>
+                            <GridViewColumn Header="Quality" Width="140" DisplayMemberBinding="{Binding Quality}"/>
+                            <GridViewColumn Header="Output" Width="140" DisplayMemberBinding="{Binding Output}"/>
+                        </GridView></ListView.View>
+                    </ListView>
+                </StackPanel>
+            </TabItem>
+            <TabItem Header="Settings">
+                <StackPanel Margin="24">
+                    <TextBlock Text="Audio and network" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                    <TextBlock Text="Output delay adjustment (milliseconds)" Margin="0,0,0,6"/>
+                    <TextBox x:Name="OutputLatencyBox" Text="0" Width="100" HorizontalAlignment="Left"/>
+                    <TextBlock Text="Use a shared click recording to adjust the physical speaker delay." Foreground="#A9B7C7" Margin="0,7,0,20"/>
+                    <CheckBox x:Name="DeveloperModeBox" Content="Developer diagnostics" Margin="0,0,0,10"/>
+                    <Button Content="Open diagnostics folder" Click="OpenDiagnostics_Click" HorizontalAlignment="Left"/>
+                    <TextBlock Text="Allow Tandem Audio on private networks if Windows Firewall asks." Foreground="#A9B7C7" Margin="0,20,0,0"/>
+                </StackPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

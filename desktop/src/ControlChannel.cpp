@@ -82,6 +82,18 @@ const char *actionName(RoomAction action) {
   return "UNKNOWN";
 }
 
+const char *connectionName(RoomConnectionState state) {
+  switch (state) {
+  case RoomConnectionState::Connected: return "CONNECTED";
+  case RoomConnectionState::Syncing: return "SYNCING";
+  case RoomConnectionState::Buffering: return "BUFFERING";
+  case RoomConnectionState::Synced: return "SYNCED";
+  case RoomConnectionState::Degraded: return "DEGRADED";
+  case RoomConnectionState::Reconnecting: return "RECONNECTING";
+  }
+  return "UNKNOWN";
+}
+
 std::string hostStateLine(ControlStreamState &state) {
   std::string result = std::string("HOST_STATE ") +
       (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
@@ -140,6 +152,20 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
   }
   if (line == "HOST_STATE") {
     return hostStateLine(state);
+  }
+  if (line == "MEMBERS") {
+    if (peerAddress != "127.0.0.1" || !state.room)
+      return "ERROR host-only-command\n";
+    std::string response;
+    for (const auto &member : state.room->snapshot().members) {
+      response += "MEMBER " + member.deviceId + " " +
+          connectionName(member.connectionState) + " " +
+          std::to_string(member.roundTripMs) + " " +
+          std::to_string(member.packetLossPercent) + " " +
+          std::to_string(member.bufferDepthMs) + " " +
+          std::to_string(member.outputLatencyMs) + "\n";
+    }
+    return response + "END\n";
   }
   if (line.rfind("CLIENT_STATE ", 0) == 0) {
     if (!state.room) return "OK\n";
