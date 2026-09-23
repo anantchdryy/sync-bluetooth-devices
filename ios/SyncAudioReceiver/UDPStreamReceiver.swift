@@ -79,7 +79,7 @@ final class UDPStreamReceiver {
         guard let expectedHost,
               case let .hostPort(remoteHost, _) = connection.endpoint,
               case let .ipv4(remoteAddress) = remoteHost,
-              remoteAddress == expectedHost else {
+              remoteAddress.rawValue == expectedHost.rawValue else {
             connection.cancel()
             return
         }

@@ -29,7 +29,7 @@ struct ContentView: View {
                 }
 
                 Section("Packets") {
-                    LabeledContent("Sequence", value: model.snapshot.lastSequenceNumber.map(String.init) ?? "—")
+                    LabeledContent("Sequence", value: model.snapshot.lastSequenceNumber.map { String($0) } ?? "—")
                     LabeledContent("Packets/sec", value: String(model.snapshot.packetsPerSecond))
                     LabeledContent("Received", value: String(model.snapshot.packetsReceived))
                     LabeledContent("Estimated loss", value: String(model.snapshot.packetsLost))
@@ -37,7 +37,7 @@ struct ContentView: View {
 
                 Section("Stream") {
                     LabeledContent("Sample rate", value: model.snapshot.sampleRate.map { "\($0) Hz" } ?? "—")
-                    LabeledContent("Channels", value: model.snapshot.channels.map(String.init) ?? "—")
+                    LabeledContent("Channels", value: model.snapshot.channels.map { String($0) } ?? "—")
                     LabeledContent("Receive buffer", value: String(format: "%.1f ms", model.snapshot.bufferDepthMilliseconds))
                     LabeledContent("PCM format", value: model.snapshot.sampleRate == nil ? "—" :
                         (model.snapshot.audioFormatSupported ? "16-bit supported" : "Unavailable"))
@@ -46,7 +46,7 @@ struct ContentView: View {
             .navigationTitle("SyncAudio Receiver")
         }
         .onChange(of: scenePhase) { phase in
-            if phase != .active && model.isListening {
+            if phase == .background && model.isListening {
                 model.stop()
             }
         }
