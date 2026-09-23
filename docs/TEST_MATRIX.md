@@ -7,8 +7,8 @@ section is inferred from a simulator or from host-side loopback traffic.
 
 | Scenario | Environment | Result | Evidence |
 | --- | --- | --- | --- |
-| Windows desktop unit/integration | local Windows Debug | PASS, 12 CTest targets | `ctest -C Debug` |
-| Windows desktop unit/integration | local Windows Release | PASS, 12 CTest targets | `ctest -C Release` |
+| Windows desktop unit/integration | local Windows Debug | PASS, 14 CTest targets | `ctest -C Debug` |
+| Windows desktop unit/integration | local Windows Release | PASS, 14 CTest targets | `ctest -C Release` |
 | Packet impairment loss/jitter/delay | seeded in-process simulator | PASS, 100 combinations | `network_impairment_tests` |
 | Blackout | 100, 500, 1000, 2000, 5000 ms simulated | PASS | `network_impairment_tests` |
 | Duplication/reordering | seeded simulator | PASS | `network_impairment_tests` |
@@ -16,7 +16,10 @@ section is inferred from a simulator or from host-side loopback traffic.
 | Malformed datagrams | 20,000 random inputs and 52 header mutations | PASS, no crash | `reliability_stress_tests` |
 | Route-dependent output latency math | C++ core + Swift simulator | PASS | `output_latency_tests`, iOS unit test |
 | Host manual latency smoke | local Windows Debug, 6-second 48 kHz mono WAV, +25 ms | PASS, 600 generated packets and 288,000 frames | CLI loopback run; acoustic timing unmeasured |
-| iPhone simulator compile/unit tests | macOS GitHub Actions | PENDING latest Phase 11 run | Actions workflow |
+| Room model and control protocol | local Windows Debug/Release | PASS | `room_tests`, `control_channel_tests` |
+| 1/2/5/10 room clients | local Windows loopback, 8 kHz mono | PASS, 25 received packets per client | `room_transport_tests`; see [rooms](ROOMS.md) |
+| Pause, resume, seek, stop | local Windows Debug, 40-second silent WAV | PASS, four scheduled commands and clean stop | CLI host/control run; iPhone acoustic response unmeasured |
+| iPhone simulator compile/unit tests | macOS GitHub Actions | PENDING Phase 13 run | Actions workflow |
 
 These tests verify deterministic packet handling and bounds. They do not
 measure sound from a physical speaker or iOS recovery after a real outage.

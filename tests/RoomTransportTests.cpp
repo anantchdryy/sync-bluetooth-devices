@@ -107,6 +107,45 @@ void scenario(const std::filesystem::path &path, int clientCount,
     std::cout << '\n';
 }
 
+void midStreamJoinAndLeave(const std::filesystem::path &path) {
+  Room room("0123456789abcdef0123456789abcdef", "Join Test", "host", 43, 8);
+  UdpAudioReceiver first("127.0.0.1", 40'550, std::chrono::milliseconds(100));
+  UdpAudioReceiver second("127.0.0.1", 40'551, std::chrono::milliseconds(100));
+  const auto firstToken = room.join("first", "127.0.0.1", 40'550);
+  DesktopNetworkHostConfig config;
+  config.port = 40'550;
+  config.sessionId = 43;
+  config.streamId = 8;
+  config.room = &room;
+  config.sendAhead = std::chrono::milliseconds(100);
+  DesktopNetworkHost host(config);
+  std::exception_ptr hostFailure;
+  std::jthread hostThread([&] {
+    try {
+      const auto start = PlaybackClock::now() + std::chrono::milliseconds(100);
+      (void)host.streamFile(path, start, 8'000, 1);
+    } catch (...) { hostFailure = std::current_exception(); }
+  });
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  int firstCount = 0;
+  while (firstCount < 5 && std::chrono::steady_clock::now() < deadline)
+    if (first.receive()) ++firstCount;
+  if (firstCount < 5) throw std::runtime_error("First member did not receive startup audio");
+  (void)room.join("second", "127.0.0.1", 40'551);
+  int secondCount = 0;
+  while (secondCount < 5 && std::chrono::steady_clock::now() < deadline)
+    if (second.receive()) ++secondCount;
+  if (secondCount < 5) throw std::runtime_error("Mid-stream join received no audio");
+  room.leave("first", firstToken);
+  while (secondCount < 10 && std::chrono::steady_clock::now() < deadline)
+    if (second.receive()) ++secondCount;
+  hostThread.join();
+  if (hostFailure) std::rethrow_exception(hostFailure);
+  if (secondCount < 10 || room.snapshot().members.size() != 1)
+    throw std::runtime_error("One leave affected another room client");
+  std::cout << "Mid-stream join and independent leave passed\n";
+}
+
 int main() {
   const auto path = std::filesystem::temp_directory_path() /
                     "tandem_room_transport_test.wav";
@@ -116,6 +155,7 @@ int main() {
     scenario(path, 2, 40'510);
     scenario(path, 5, 40'520);
     scenario(path, 10, 40'530);
+    midStreamJoinAndLeave(path);
     std::filesystem::remove(path);
     std::cout << "Room scale matrix passed, including one bad endpoint\n";
     return 0;
