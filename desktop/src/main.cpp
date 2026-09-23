@@ -32,6 +32,7 @@ struct CommandLine {
   std::uint16_t audioPort{40'100};
   std::uint16_t clockSyncPort{40'101};
   std::uint16_t sessionPort{40'102};
+  std::chrono::milliseconds outputLatencyAdjustment{};
 #ifndef NDEBUG
   std::optional<NetworkImpairmentConfig> impairment;
 #endif
@@ -42,7 +43,8 @@ void printUsage() {
       << "Usage:\n"
       << "  syncaudio path/to/file.wav\n"
       << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT] "
-         "[--control-port PORT] [--session-port PORT]\n"
+         "[--control-port PORT] [--session-port PORT] "
+         "[--output-latency-ms -1000..1000]\n"
 #ifndef NDEBUG
       << "    Debug host only: [--impair-loss PERCENT] [--impair-delay MS] "
          "[--impair-jitter MS] [--impair-duplicate PERCENT] "
@@ -50,7 +52,7 @@ void printUsage() {
          "[--impair-seed INTEGER]\n"
 #endif
       << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
-         "[--control-port PORT]\n";
+         "[--control-port PORT] [--output-latency-ms -1000..1000]\n";
 }
 
 #ifndef NDEBUG
@@ -80,6 +82,16 @@ std::uint16_t parsePort(std::string_view text) {
     throw std::invalid_argument("Port must be an integer from 1 to 65535");
   }
   return static_cast<std::uint16_t>(value);
+}
+
+std::chrono::milliseconds parseOutputLatency(std::string_view text) {
+  int value = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), value);
+  if (error != std::errc{} || end != text.data() + text.size() ||
+      value < -1'000 || value > 1'000)
+    throw std::invalid_argument("Output latency must be -1000..1000 ms");
+  return std::chrono::milliseconds(value);
 }
 
 CommandLine parseCommandLine(int argc, char *argv[]) {
@@ -116,6 +128,8 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     } else if (option == "--session-port" && index + 1 < argc &&
                result.mode == Mode::Host) {
       result.sessionPort = parsePort(argv[++index]);
+    } else if (option == "--output-latency-ms" && index + 1 < argc) {
+      result.outputLatencyAdjustment = parseOutputLatency(argv[++index]);
 #ifndef NDEBUG
     } else if (result.mode == Mode::Host && index + 1 < argc &&
                option.starts_with("--impair-")) {
@@ -191,6 +205,7 @@ void runHost(const CommandLine &commandLine) {
   DesktopNetworkHostConfig config;
   config.destinationAddress = commandLine.destinationAddress;
   config.port = commandLine.audioPort;
+  config.hostOutputLatency = commandLine.outputLatencyAdjustment;
   std::random_device random;
   config.sessionId = (static_cast<std::uint64_t>(random()) << 32U) | random();
   if (config.sessionId == 0) config.sessionId = 1;
@@ -201,6 +216,7 @@ void runHost(const CommandLine &commandLine) {
   controlState.sampleRate = player.metadata().sampleRate;
   controlState.channels = static_cast<std::uint16_t>(player.metadata().channels);
   config.progressFrame = &controlState.currentFrame;
+  config.outputRouteChanged = [&player] { return player.outputRouteChanged(); };
 #ifndef NDEBUG
   config.impairment = commandLine.impairment;
 #endif
@@ -222,6 +238,8 @@ void runHost(const CommandLine &commandLine) {
             << "Session TCP port: " << commandLine.sessionPort << '\n'
             << "Discovered as:    " << controlState.hostAddress << '\n'
             << "PCM format:      signed 16-bit little-endian\n"
+            << "Host output latency adjustment: "
+            << config.hostOutputLatency.count() << " ms (manual)\n"
             << "Playing locally and streaming...\n";
 
   const auto scheduledStart = PlaybackClock::now() + config.sendAhead;
@@ -261,6 +279,7 @@ void runClient(const CommandLine &commandLine) {
   config.bindAddress = commandLine.bindAddress;
   config.audioPort = commandLine.audioPort;
   config.clockSyncPort = commandLine.clockSyncPort;
+  config.outputLatencyAdjustment = commandLine.outputLatencyAdjustment;
 
   std::cout << "Waiting for host " << commandLine.argument << "...\n"
             << "Audio listen port: " << config.audioPort << '\n'
@@ -300,6 +319,9 @@ void runClient(const CommandLine &commandLine) {
             << stats.correctionRatio << std::setprecision(3) << '\n'
             << "Estimated playback delay: "
             << stats.estimatedPlaybackDelayMilliseconds << " ms\n"
+            << "Output route:             " << stats.outputRouteName << '\n'
+            << "Output latency adjustment: "
+            << stats.outputLatencyAdjustmentMilliseconds << " ms\n"
             << "Underrun frames:           " << stats.underrunFrames << '\n';
 }
 

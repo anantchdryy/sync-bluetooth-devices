@@ -104,6 +104,9 @@ DesktopNetworkHost::DesktopNetworkHost(DesktopNetworkHostConfig config)
   if (config_.sendAhead < std::chrono::milliseconds::zero()) {
     throw std::invalid_argument("Send-ahead duration must not be negative");
   }
+  if (config_.hostOutputLatency < std::chrono::milliseconds{-1'000} ||
+      config_.hostOutputLatency > std::chrono::milliseconds{1'000})
+    throw std::invalid_argument("Host output latency calibration is invalid");
 }
 
 DesktopNetworkHostStats
@@ -156,7 +159,9 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
     for (const auto &ready : impairment->drain(impairmentNow())) sender.send(ready.bytes);
   };
 #endif
-  PlaybackClock clock(sampleRate, playbackStartTime);
+  // SAUD timestamps now refer to estimated acoustic presentation, including
+  // the host's local output path. The host never delays its audio callback.
+  PlaybackClock clock(sampleRate, playbackStartTime + config_.hostOutputLatency);
   std::vector<std::int16_t> samples(framesPerPacket * channelCount);
   std::uint64_t startFrame = 0;
   std::uint32_t sequenceNumber = 0;
@@ -164,6 +169,8 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
   auto lastSend = firstSend;
 
   while (true) {
+    if (config_.outputRouteChanged && config_.outputRouteChanged())
+      throw std::runtime_error("Host output route changed; restart with a calibration for the new route");
     const auto framesRead = decoder.read(samples, framesPerPacket);
     if (framesRead == 0) {
       break;

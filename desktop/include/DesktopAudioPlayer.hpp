@@ -35,6 +35,7 @@ public:
   void stop() noexcept;
 
   [[nodiscard]] bool isPlaying() const noexcept;
+  [[nodiscard]] bool outputRouteChanged() const noexcept;
   [[nodiscard]] bool isLoaded() const noexcept;
   [[nodiscard]] const AudioMetadata &metadata() const noexcept;
   [[nodiscard]] PlaybackClock::Frame currentPlaybackFrame() const noexcept;

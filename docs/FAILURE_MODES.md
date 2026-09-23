@@ -29,9 +29,9 @@ recover audio if the host itself has stopped broadcasting.
 | Underrun | queue empty | audible gap | player counter | stop/rebuffer | buffering | underruns | inject long blackout |
 | Buffer overrun | sender faster/paused output | stale PCM | bounded queue limits | evict stale packets | degraded if persistent | depth, overflow | inject duplicates/delay |
 | Sample-rate mismatch | stream format changes | wrong pitch or reject | header/stream validation | reset on new session; reject midstream | reconnect | sample rate, format | mutate sample-rate field |
-| Output device change | route switched | timing changes | iOS route notification (Phase 12) | remeasure and rebuffer after Phase 12 | calibrating | route ID, latency | swap outputs |
-| Headphones plug/unplug | route switched | possible gap | route notification (Phase 12) | Phase 12 recovery | calibrating | route ID | insert/remove wired set |
-| Bluetooth route change | OS reconnect | latency jump | route notification (Phase 12) | Phase 12 recovery | calibrating | route/latency | connect/disconnect headset |
+| Output device change | route switched | timing changes | iOS route notification | iPhone loads new route estimate and re-buffers | calibrating | route ID, latency | swap outputs |
+| Headphones plug/unplug | route switched | possible gap | iOS route notification | iPhone re-buffers with route-specific adjustment | calibrating | route ID | insert/remove wired set |
+| Bluetooth route change | OS reconnect | latency jump | iOS route notification | iPhone re-buffers; acoustic accuracy pending | calibrating | route/latency | connect/disconnect headset |
 | Audio interruption | call/audio focus | playback halts | AVAudioSession notification | stop engine and rebuffer on end | waiting for audio | state, underruns | simulate call/Siri |
 | CPU overload | callback misses | stutter | underrun count | rebuffer | unstable | CPU external, underruns | synthetic CPU load |
 | Laptop sleep/wake | host clock/network stop | stream disappears | control and packet timeout | clients retry; host restart may be required | reconnecting | state, session | sleep/wake laptop |
@@ -55,5 +55,7 @@ recover audio if the host itself has stopped broadcasting.
 The retry path is implemented in the iPhone control channel, but physical
 Wi-Fi handoff, lock/background behavior, and acoustic recovery time have not
 been measured. TCP JOIN currently accepts any LAN client with a syntactically
-valid device ID; room authorization belongs to Phase 13. Phase 12 must handle
-route changes before the three output-device rows above can claim recovery.
+valid device ID; room authorization belongs to Phase 13. Windows output-route
+changes reported by miniaudio stop the stream and require a restart with a
+route-appropriate calibration; automatic desktop rebuffering is not
+implemented. Some backends do not report reroutes.

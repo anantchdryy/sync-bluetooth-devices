@@ -122,6 +122,7 @@ public:
     config.sampleRate = decoder_.outputSampleRate;
     config.periodSizeInMilliseconds = 10;
     config.dataCallback = &Impl::dataCallback;
+    config.notificationCallback = &Impl::notificationCallback;
     config.pUserData = this;
 
     auto result = ma_device_init(nullptr, &config, &device_);
@@ -138,6 +139,7 @@ public:
     playbackClock_.emplace(metadata_.sampleRate, startTime);
     timelineRunning_.store(true, std::memory_order_release);
     playing_.store(true, std::memory_order_release);
+    outputRouteChanged_.store(false, std::memory_order_release);
 
     result = ma_device_start(&device_);
     if (result != MA_SUCCESS) {
@@ -165,6 +167,10 @@ public:
 
   [[nodiscard]] bool isPlaying() const noexcept {
     return playing_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] bool outputRouteChanged() const noexcept {
+    return outputRouteChanged_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]] bool isLoaded() const noexcept { return decoderInitialized_; }
@@ -216,6 +222,12 @@ public:
   }
 
 private:
+  static void notificationCallback(const ma_device_notification *notification) {
+    if (notification->type == ma_device_notification_type_rerouted) {
+      auto *self = static_cast<Impl *>(notification->pDevice->pUserData);
+      self->outputRouteChanged_.store(true, std::memory_order_release);
+    }
+  }
   void prefetch() noexcept {
     while (prefetchRunning_.load(std::memory_order_acquire)) {
       const auto written = writtenFrame_.load(std::memory_order_relaxed);
@@ -333,6 +345,7 @@ private:
   bool decoderInitialized_{false};
   bool deviceInitialized_{false};
   std::atomic_bool playing_{false};
+  std::atomic_bool outputRouteChanged_{false};
   std::atomic_bool endReached_{false};
   std::atomic_bool timelineRunning_{false};
   std::atomic<PlaybackClock::Frame> submittedFrames_{0};
@@ -359,6 +372,10 @@ void DesktopAudioPlayer::stop() noexcept { impl_->stop(); }
 
 bool DesktopAudioPlayer::isPlaying() const noexcept {
   return impl_->isPlaying();
+}
+
+bool DesktopAudioPlayer::outputRouteChanged() const noexcept {
+  return impl_->outputRouteChanged();
 }
 
 bool DesktopAudioPlayer::isLoaded() const noexcept { return impl_->isLoaded(); }

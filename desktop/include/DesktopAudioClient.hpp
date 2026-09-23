@@ -10,6 +10,7 @@ struct DesktopAudioClientConfig {
   std::uint16_t clockSyncPort{40'101};
   std::chrono::milliseconds playbackDelay{20};
   std::chrono::milliseconds startupLead{40};
+  std::chrono::milliseconds outputLatencyAdjustment{};
 };
 
 struct DesktopAudioClientStats {
@@ -33,6 +34,8 @@ struct DesktopAudioClientStats {
   double bufferErrorMilliseconds{};
   double correctionRatio{1.0};
   double estimatedPlaybackDelayMilliseconds{};
+  double outputLatencyAdjustmentMilliseconds{};
+  std::string outputRouteName;
   std::uint64_t underrunFrames{};
 };
 

@@ -1,4 +1,5 @@
 #include "DesktopAudioClient.hpp"
+#include "OutputLatency.hpp"
 
 #include "ClockSyncTransport.hpp"
 #include "DriftCorrection.hpp"
@@ -173,6 +174,7 @@ public:
     config.sampleRate = format.sampleRate;
     config.periodSizeInMilliseconds = 10;
     config.dataCallback = &ScheduledStreamPlayer::dataCallback;
+    config.notificationCallback = &ScheduledStreamPlayer::notificationCallback;
     config.pUserData = this;
     const auto result = ma_device_init(nullptr, &config, &device_);
     if (result != MA_SUCCESS) {
@@ -181,6 +183,11 @@ public:
           ma_result_description(result));
     }
     initialized_ = true;
+    ma_device_info deviceInfo{};
+    if (ma_device_get_info(&device_, ma_device_type_playback,
+                           &deviceInfo) == MA_SUCCESS)
+      outputRouteName_ = deviceInfo.name;
+    else outputRouteName_ = "Unknown output";
   }
 
   ~ScheduledStreamPlayer() { stop(); }
@@ -229,6 +236,14 @@ public:
     return underrunFrames_.load(std::memory_order_acquire);
   }
 
+  [[nodiscard]] const std::string &outputRouteName() const noexcept {
+    return outputRouteName_;
+  }
+
+  [[nodiscard]] bool outputRouteChanged() const noexcept {
+    return outputRouteChanged_.load(std::memory_order_acquire);
+  }
+
   void setCorrectionRatio(double ratio) noexcept {
     targetRatio_.store(ratio, std::memory_order_release);
   }
@@ -238,6 +253,12 @@ public:
   }
 
 private:
+  static void notificationCallback(const ma_device_notification *notification) {
+    if (notification->type == ma_device_notification_type_rerouted) {
+      auto *self = static_cast<ScheduledStreamPlayer *>(notification->pDevice->pUserData);
+      self->outputRouteChanged_.store(true, std::memory_order_release);
+    }
+  }
   static void dataCallback(ma_device *device, void *output, const void *,
                            ma_uint32 frameCount) {
     auto *self = static_cast<ScheduledStreamPlayer *>(device->pUserData);
@@ -314,9 +335,11 @@ private:
   double sourceFraction_{};
   double ratio_{1.0};
   std::vector<std::int16_t> sourceSamples_;
+  std::string outputRouteName_;
   std::atomic<double> targetRatio_{1.0};
   std::atomic<double> actualRatio_{1.0};
   std::atomic<std::uint64_t> currentFrame_{};
+  std::atomic_bool outputRouteChanged_{false};
   PlaybackClock::Timestamp startTime_{};
   std::chrono::milliseconds configuredDelay_{};
   ma_device device_{};
@@ -336,7 +359,9 @@ double milliseconds(std::chrono::nanoseconds duration) {
 DesktopAudioClient::DesktopAudioClient(DesktopAudioClientConfig config)
     : config_(std::move(config)) {
   if (config_.audioPort == 0 || config_.clockSyncPort == 0 ||
-      config_.playbackDelay < 0ms || config_.startupLead <= 0ms) {
+      config_.playbackDelay < 0ms || config_.startupLead <= 0ms ||
+      config_.outputLatencyAdjustment < -1s ||
+      config_.outputLatencyAdjustment > 1s) {
     throw std::invalid_argument(
         "Desktop audio client configuration is invalid");
   }
@@ -372,6 +397,10 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   // it before selecting a packet so the chosen timestamp remains in the
   // future when playback starts.
   ScheduledStreamPlayer player(jitterBuffer, *format, config_.playbackDelay);
+  OutputLatency outputLatency{player.outputRouteName(), OutputRouteType::Unknown,
+                              CalibrationConfidence::Manual, 0ns,
+                              config_.outputLatencyAdjustment};
+  const auto outputCorrection = outputLatency.effectiveLatency();
 
   const auto selectionDeadline = PlaybackClock::now() + 5s;
   std::optional<BufferedPacketTiming> startPacket;
@@ -384,7 +413,7 @@ DesktopAudioClient::run(const std::string &hostAddress) {
             clientThreshold.time_since_epoch().count())) -
         std::chrono::duration_cast<PlaybackClock::Duration>(
             config_.playbackDelay)
-            .count();
+            .count() + outputCorrection.count();
     if (hostThreshold >= 0) {
       startPacket = jitterBuffer.firstPacketAtOrAfter(
           static_cast<std::uint64_t>(hostThreshold));
@@ -404,7 +433,7 @@ DesktopAudioClient::run(const std::string &hostAddress) {
       static_cast<std::int64_t>(driftEstimator.offsetNanosecondsAt(
           PlaybackClock::now().time_since_epoch().count())) +
       std::chrono::duration_cast<PlaybackClock::Duration>(config_.playbackDelay)
-          .count();
+          .count() - outputCorrection.count();
   if (localPresentationNanoseconds < 0) {
     throw std::runtime_error("Translated client presentation time is invalid");
   }
@@ -420,6 +449,8 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   while (true) {
     std::this_thread::sleep_for(100ms);
     receiver.rethrowIfFailed();
+    if (player.outputRouteChanged())
+      throw std::runtime_error("Client output route changed; restart with a calibration for the new route");
     if (PlaybackClock::now() >= nextClockMeasurement) {
       try {
         latestClockEstimate = ClockSyncClient::measure(
@@ -442,8 +473,9 @@ DesktopAudioClient::run(const std::string &hostAddress) {
           (hostNow - static_cast<double>(startPacket->presentationTimestampNanoseconds) -
            static_cast<double>(
                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   config_.playbackDelay).count())) *
-              static_cast<double>(format->sampleRate) / 1'000'000'000.0;
+                   config_.playbackDelay).count()) +
+           static_cast<double>(outputCorrection.count())) *
+          static_cast<double>(format->sampleRate) / 1'000'000'000.0;
       bufferErrorMilliseconds =
           (desiredFrame - static_cast<double>(currentFrame)) * 1'000.0 /
           static_cast<double>(format->sampleRate);
@@ -497,6 +529,8 @@ DesktopAudioClient::run(const std::string &hostAddress) {
   stats.correctionRatio = player.correctionRatio();
   stats.estimatedPlaybackDelayMilliseconds =
       milliseconds(player.estimatedPlaybackDelay());
+  stats.outputLatencyAdjustmentMilliseconds = milliseconds(outputCorrection);
+  stats.outputRouteName = player.outputRouteName();
   stats.underrunFrames = player.underrunFrames();
   return stats;
 }

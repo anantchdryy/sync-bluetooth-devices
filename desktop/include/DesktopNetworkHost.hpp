@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 struct DesktopNetworkHostConfig {
@@ -17,8 +18,10 @@ struct DesktopNetworkHostConfig {
   std::uint16_t port{40'100};
   std::chrono::milliseconds desiredPacketDuration{10};
   std::chrono::milliseconds sendAhead{500};
+  std::chrono::milliseconds hostOutputLatency{};
   std::uint64_t sessionId{};
   std::atomic<std::uint64_t> *progressFrame{};
+  std::function<bool()> outputRouteChanged;
 #ifndef NDEBUG
   std::optional<NetworkImpairmentConfig> impairment;
 #endif
