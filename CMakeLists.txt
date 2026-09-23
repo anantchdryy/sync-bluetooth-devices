@@ -25,38 +25,26 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(miniaudio_backend PUBLIC dl m pthread)
 endif()
 
-add_library(playback_clock STATIC core/src/PlaybackClock.cpp)
-target_include_directories(playback_clock PUBLIC core/include)
-target_compile_features(playback_clock PUBLIC cxx_std_20)
+add_subdirectory(core)
 
-add_library(drift_correction STATIC core/src/DriftCorrection.cpp)
-target_include_directories(drift_correction PUBLIC core/include)
-target_compile_features(drift_correction PUBLIC cxx_std_20)
-
-add_library(network_audio STATIC
-    network/src/ClockSync.cpp
-    network/src/PacketSerializer.cpp
-    network/src/UdpAudioReceiver.cpp
-    network/src/UdpAudioSender.cpp
+add_library(desktop_transport STATIC
+    desktop/src/ClockSyncTransport.cpp
+    desktop/src/UdpAudioReceiver.cpp
+    desktop/src/UdpAudioSender.cpp
 )
-target_include_directories(network_audio PUBLIC network/include)
-target_compile_features(network_audio PUBLIC cxx_std_20)
-target_link_libraries(network_audio PUBLIC playback_clock)
+target_include_directories(desktop_transport PUBLIC desktop/include)
+target_link_libraries(desktop_transport PUBLIC syncaudio_core)
+target_compile_features(desktop_transport PUBLIC cxx_std_20)
 if(WIN32)
-    target_link_libraries(network_audio PRIVATE ws2_32)
+    target_link_libraries(desktop_transport PRIVATE ws2_32)
 endif()
-
-add_library(jitter_buffer STATIC core/src/JitterBuffer.cpp)
-target_include_directories(jitter_buffer PUBLIC core/include)
-target_link_libraries(jitter_buffer PUBLIC network_audio)
-target_compile_features(jitter_buffer PUBLIC cxx_std_20)
 
 add_library(desktop_audio_player STATIC
     desktop/src/DesktopAudioPlayer.cpp
 )
 target_include_directories(desktop_audio_player PUBLIC desktop/include)
 target_link_libraries(desktop_audio_player
-    PUBLIC playback_clock
+    PUBLIC syncaudio_core
     PRIVATE miniaudio_backend
 )
 target_compile_features(desktop_audio_player PUBLIC cxx_std_20)
@@ -64,7 +52,7 @@ target_compile_features(desktop_audio_player PUBLIC cxx_std_20)
 add_library(desktop_network_host STATIC desktop/src/DesktopNetworkHost.cpp)
 target_include_directories(desktop_network_host PUBLIC desktop/include)
 target_link_libraries(desktop_network_host
-    PUBLIC playback_clock network_audio
+    PUBLIC syncaudio_core desktop_transport
     PRIVATE miniaudio_backend
 )
 target_compile_features(desktop_network_host PUBLIC cxx_std_20)
@@ -72,7 +60,7 @@ target_compile_features(desktop_network_host PUBLIC cxx_std_20)
 add_library(desktop_audio_client STATIC desktop/src/DesktopAudioClient.cpp)
 target_include_directories(desktop_audio_client PUBLIC desktop/include)
 target_link_libraries(desktop_audio_client
-    PUBLIC jitter_buffer network_audio playback_clock drift_correction
+    PUBLIC syncaudio_core desktop_transport
     PRIVATE miniaudio_backend
 )
 target_compile_features(desktop_audio_client PUBLIC cxx_std_20)
@@ -93,37 +81,45 @@ function(enable_project_warnings target)
 endfunction()
 
 enable_project_warnings(desktop_audio_player)
-enable_project_warnings(playback_clock)
-enable_project_warnings(drift_correction)
-enable_project_warnings(network_audio)
-enable_project_warnings(jitter_buffer)
+enable_project_warnings(syncaudio_core)
+enable_project_warnings(desktop_transport)
 enable_project_warnings(desktop_network_host)
 enable_project_warnings(desktop_audio_client)
 enable_project_warnings(syncaudio)
 
 if(BUILD_TESTING)
+    add_executable(desktop_transport_tests tests/DesktopTransportTests.cpp)
+    target_link_libraries(desktop_transport_tests PRIVATE desktop_transport)
+    enable_project_warnings(desktop_transport_tests)
+    add_test(NAME desktop_transport_tests COMMAND desktop_transport_tests)
+
+    add_executable(clock_sync_core_tests tests/ClockSyncCoreTests.cpp)
+    target_link_libraries(clock_sync_core_tests PRIVATE syncaudio_core)
+    enable_project_warnings(clock_sync_core_tests)
+    add_test(NAME clock_sync_core_tests COMMAND clock_sync_core_tests)
+
     add_executable(drift_correction_tests tests/DriftCorrectionTests.cpp)
-    target_link_libraries(drift_correction_tests PRIVATE drift_correction)
+    target_link_libraries(drift_correction_tests PRIVATE syncaudio_core)
     enable_project_warnings(drift_correction_tests)
     add_test(NAME drift_correction_tests COMMAND drift_correction_tests)
 
     add_executable(clock_sync_tests tests/ClockSyncTests.cpp)
-    target_link_libraries(clock_sync_tests PRIVATE network_audio)
+    target_link_libraries(clock_sync_tests PRIVATE desktop_transport)
     enable_project_warnings(clock_sync_tests)
     add_test(NAME clock_sync_tests COMMAND clock_sync_tests)
 
     add_executable(jitter_buffer_tests tests/JitterBufferTests.cpp)
-    target_link_libraries(jitter_buffer_tests PRIVATE jitter_buffer)
+    target_link_libraries(jitter_buffer_tests PRIVATE syncaudio_core)
     enable_project_warnings(jitter_buffer_tests)
     add_test(NAME jitter_buffer_tests COMMAND jitter_buffer_tests)
 
     add_executable(packet_serializer_tests tests/PacketSerializerTests.cpp)
-    target_link_libraries(packet_serializer_tests PRIVATE network_audio)
+    target_link_libraries(packet_serializer_tests PRIVATE syncaudio_core)
     enable_project_warnings(packet_serializer_tests)
     add_test(NAME packet_serializer_tests COMMAND packet_serializer_tests)
 
     add_executable(playback_clock_tests tests/PlaybackClockTests.cpp)
-    target_link_libraries(playback_clock_tests PRIVATE playback_clock)
+    target_link_libraries(playback_clock_tests PRIVATE syncaudio_core)
     enable_project_warnings(playback_clock_tests)
     add_test(NAME playback_clock_tests COMMAND playback_clock_tests)
 

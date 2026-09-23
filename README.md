@@ -200,11 +200,11 @@ and does not include unknown speaker, Bluetooth, or audio-driver output latency.
 
 ## Project layout
 
-- `core/include` and `core/src` — portable playback clock and jitter buffer
-- `network/include` and `network/src` — packet serialization, UDP transport,
-  and clock-sync control messages
-- `desktop/include` — desktop player, host, and client interfaces
-- `desktop/src` — miniaudio-backed playback, scheduling, host/client, and CLI
+- `core` — standalone C++20 library with packet serialization, clock sync
+  protocol/math, jitter buffer, drift correction, and playback timeline;
+  see [iOS reuse notes](core/README.md)
+- `desktop/include` and `desktop/src` — desktop UDP socket transport,
+  miniaudio-backed playback, scheduling, host/client, and CLI
 - `tests` — packet serialization, jitter buffer, clock sync, clock conversion,
   file handling, and WAV metadata tests
 - `ios` is deferred until the iOS phase

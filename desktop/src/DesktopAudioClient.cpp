@@ -1,6 +1,6 @@
 #include "DesktopAudioClient.hpp"
 
-#include "ClockSync.hpp"
+#include "ClockSyncTransport.hpp"
 #include "DriftCorrection.hpp"
 #include "JitterBuffer.hpp"
 #include "PacketSerializer.hpp"

@@ -1,4 +1,5 @@
 /build/
+/build-core/
 /out/
 /.vs/
 /.vscode/

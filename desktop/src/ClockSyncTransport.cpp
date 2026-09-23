@@ -1,17 +1,14 @@
-#include "ClockSync.hpp"
+#include "ClockSyncTransport.hpp"
 
 #include "PlaybackClock.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cmath>
-#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -30,67 +27,12 @@
 #endif
 
 namespace {
-
-constexpr std::array<std::byte, 4> magic{std::byte{'S'}, std::byte{'C'},
-                                         std::byte{'L'}, std::byte{'K'}};
-
-void appendU8(std::span<std::byte> output, std::size_t &offset,
-              std::uint8_t value) {
-  output[offset++] = static_cast<std::byte>(value);
-}
-
-void appendU16(std::span<std::byte> output, std::size_t &offset,
-               std::uint16_t value) {
-  appendU8(output, offset, static_cast<std::uint8_t>(value >> 8U));
-  appendU8(output, offset, static_cast<std::uint8_t>(value));
-}
-
-void appendU32(std::span<std::byte> output, std::size_t &offset,
-               std::uint32_t value) {
-  appendU16(output, offset, static_cast<std::uint16_t>(value >> 16U));
-  appendU16(output, offset, static_cast<std::uint16_t>(value));
-}
-
-void appendU64(std::span<std::byte> output, std::size_t &offset,
-               std::uint64_t value) {
-  appendU32(output, offset, static_cast<std::uint32_t>(value >> 32U));
-  appendU32(output, offset, static_cast<std::uint32_t>(value));
-}
-
-std::uint8_t readU8(std::span<const std::byte> data, std::size_t &offset) {
-  return std::to_integer<std::uint8_t>(data[offset++]);
-}
-
-std::uint16_t readU16(std::span<const std::byte> data, std::size_t &offset) {
-  return static_cast<std::uint16_t>(
-      (static_cast<std::uint16_t>(readU8(data, offset)) << 8U) |
-      readU8(data, offset));
-}
-
-std::uint32_t readU32(std::span<const std::byte> data, std::size_t &offset) {
-  return (static_cast<std::uint32_t>(readU16(data, offset)) << 16U) |
-         readU16(data, offset);
-}
-
-std::uint64_t readU64(std::span<const std::byte> data, std::size_t &offset) {
-  return (static_cast<std::uint64_t>(readU32(data, offset)) << 32U) |
-         readU32(data, offset);
-}
-
 std::uint64_t nowNanoseconds() {
   const auto count = PlaybackClock::now().time_since_epoch().count();
   if (count < 0) {
     throw std::runtime_error("Monotonic clock returned a negative timestamp");
   }
   return static_cast<std::uint64_t>(count);
-}
-
-std::int64_t checkedTimestamp(std::uint64_t value) {
-  if (value >
-      static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-    throw std::runtime_error("Clock timestamp exceeds the supported range");
-  }
-  return static_cast<std::int64_t>(value);
 }
 
 #ifdef _WIN32
@@ -167,54 +109,6 @@ sockaddr_in makeAddress(const std::string &address, std::uint16_t port) {
 }
 
 } // namespace
-
-std::array<std::byte, ClockSyncSerializer::MessageSize>
-ClockSyncSerializer::serialize(const ClockSyncMessage &message) {
-  if (message.type != ClockSyncMessageType::Request &&
-      message.type != ClockSyncMessageType::Response) {
-    throw std::invalid_argument("Clock-sync message type is invalid");
-  }
-
-  std::array<std::byte, MessageSize> output{};
-  std::copy(magic.begin(), magic.end(), output.begin());
-  std::size_t offset = magic.size();
-  appendU8(output, offset, ClockSyncMessage::ProtocolVersion);
-  appendU8(output, offset, static_cast<std::uint8_t>(message.type));
-  appendU16(output, offset, static_cast<std::uint16_t>(MessageSize));
-  appendU32(output, offset, message.requestId);
-  appendU32(output, offset, 0); // Reserved.
-  appendU64(output, offset, message.clientSendTimestampNanoseconds);
-  appendU64(output, offset, message.hostReceiveTimestampNanoseconds);
-  appendU64(output, offset, message.hostSendTimestampNanoseconds);
-  return output;
-}
-
-ClockSyncMessage
-ClockSyncSerializer::deserialize(std::span<const std::byte> data) {
-  if (data.size() != MessageSize ||
-      !std::equal(magic.begin(), magic.end(), data.begin())) {
-    throw std::invalid_argument("Clock-sync message header is invalid");
-  }
-  std::size_t offset = magic.size();
-  if (readU8(data, offset) != ClockSyncMessage::ProtocolVersion) {
-    throw std::invalid_argument("Clock-sync protocol version is unsupported");
-  }
-  ClockSyncMessage result;
-  result.type = static_cast<ClockSyncMessageType>(readU8(data, offset));
-  if (result.type != ClockSyncMessageType::Request &&
-      result.type != ClockSyncMessageType::Response) {
-    throw std::invalid_argument("Clock-sync message type is invalid");
-  }
-  if (readU16(data, offset) != MessageSize) {
-    throw std::invalid_argument("Clock-sync message size is invalid");
-  }
-  result.requestId = readU32(data, offset);
-  static_cast<void>(readU32(data, offset));
-  result.clientSendTimestampNanoseconds = readU64(data, offset);
-  result.hostReceiveTimestampNanoseconds = readU64(data, offset);
-  result.hostSendTimestampNanoseconds = readU64(data, offset);
-  return result;
-}
 
 class ClockSyncServer::Impl {
 public:
@@ -345,12 +239,7 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
   const auto destination = makeAddress(hostAddress, port);
   const auto deadline = PlaybackClock::now() + overallTimeout;
 
-  struct Sample {
-    std::chrono::nanoseconds offset;
-    std::chrono::nanoseconds roundTrip;
-    std::int64_t clientTime;
-  };
-  std::vector<Sample> samples;
+  std::vector<ClockSyncEstimate> samples;
   std::uint32_t requestId = 1;
 
   while (samples.size() < desiredSamples && PlaybackClock::now() < deadline) {
@@ -398,7 +287,7 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
       throw std::runtime_error("Unable to receive clock-sync response: " +
                                socketError());
     }
-    const auto t4 = checkedTimestamp(nowNanoseconds());
+    const auto t4 = nowNanoseconds();
 
     try {
       const auto response =
@@ -410,20 +299,10 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
               request.clientSendTimestampNanoseconds) {
         continue;
       }
-      const auto t1 = checkedTimestamp(response.clientSendTimestampNanoseconds);
-      const auto t2 =
-          checkedTimestamp(response.hostReceiveTimestampNanoseconds);
-      const auto t3 = checkedTimestamp(response.hostSendTimestampNanoseconds);
-      const auto roundTrip = (t4 - t1) - (t3 - t2);
-      const auto offset = static_cast<std::int64_t>(
-          std::llround((static_cast<long double>(t2 - t1) +
-                        static_cast<long double>(t3 - t4)) /
-                       2.0L));
-      if (roundTrip >= 0) {
-        samples.push_back(Sample{std::chrono::nanoseconds{offset},
-                                 std::chrono::nanoseconds{roundTrip},
-                                 t1 + (t4 - t1) / 2});
-      }
+      samples.push_back(ClockSyncMath::estimate(
+          response.clientSendTimestampNanoseconds,
+          response.hostReceiveTimestampNanoseconds,
+          response.hostSendTimestampNanoseconds, t4));
     } catch (const std::invalid_argument &) {
       continue;
     }
@@ -435,10 +314,11 @@ ClockSyncEstimate ClockSyncClient::measure(const std::string &hostAddress,
   }
   const auto best =
       std::min_element(samples.begin(), samples.end(),
-                       [](const Sample &left, const Sample &right) {
-                         return left.roundTrip < right.roundTrip;
+                       [](const ClockSyncEstimate &left,
+                          const ClockSyncEstimate &right) {
+                         return left.roundTripTime < right.roundTripTime;
                        });
-  return ClockSyncEstimate{best->offset, best->roundTrip,
-                           static_cast<std::uint32_t>(samples.size()),
-                           best->clientTime};
+  auto result = *best;
+  result.samples = static_cast<std::uint32_t>(samples.size());
+  return result;
 }

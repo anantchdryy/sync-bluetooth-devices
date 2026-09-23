@@ -4,9 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <span>
-#include <string>
 
 enum class ClockSyncMessageType : std::uint8_t {
   Request = 1,
@@ -41,23 +39,12 @@ public:
   deserialize(std::span<const std::byte> data);
 };
 
-class ClockSyncServer {
+class ClockSyncMath {
 public:
-  ClockSyncServer(std::string bindAddress, std::uint16_t port);
-  ~ClockSyncServer();
-
-  ClockSyncServer(const ClockSyncServer &) = delete;
-  ClockSyncServer &operator=(const ClockSyncServer &) = delete;
-
-private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
-};
-
-class ClockSyncClient {
-public:
+  // Four monotonic timestamps from one request/response exchange.
   [[nodiscard]] static ClockSyncEstimate
-  measure(const std::string &hostAddress, std::uint16_t port,
-          std::chrono::seconds overallTimeout = std::chrono::seconds{30},
-          std::uint32_t desiredSamples = 8);
+  estimate(std::uint64_t clientSendNanoseconds,
+           std::uint64_t hostReceiveNanoseconds,
+           std::uint64_t hostSendNanoseconds,
+           std::uint64_t clientReceiveNanoseconds);
 };
