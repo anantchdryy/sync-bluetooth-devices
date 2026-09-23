@@ -40,13 +40,14 @@ iPhone is required to validate desktop-to-phone Wi-Fi delivery.
 
 1. Connect the desktop and iPhone to the same Wi-Fi/LAN. Find the desktop's
    IPv4 address and the iPhone's IPv4 address in their network settings.
-2. In the iPhone app, enter the **desktop host IPv4 address** and audio UDP port
-   `40100`, then tap **Start Listening**. Leave the app in the foreground.
+2. In the iPhone app, enter the **desktop host IPv4 address**, audio UDP port
+   `40100`, and clock UDP port `40101`, then tap **Start Listening**. Leave the
+   app in the foreground. Allow UDP on both ports through the desktop firewall.
 3. On the desktop, build the repository as described in the root README. Run
    the host with the **iPhone's IPv4 address** as its destination:
 
    ```powershell
-   .\build\Release\syncaudio.exe host "C:\path\to\file.wav" --address 192.168.1.20 --port 40100
+   .\build\Release\syncaudio.exe host "C:\path\to\file.wav" --address 192.168.1.20 --port 40100 --control-port 40101
    ```
 
    Replace `192.168.1.20` with the iPhone's address. Permit private-network
@@ -75,3 +76,30 @@ The iOS Simulator build and converter/queue tests verify software paths. To
 verify actual audio, run on an iPhone, play an audible WAV on the desktop host,
 and listen on the phone. Record the playback state, underrun count, output
 pipeline value, and whether audio is uninterrupted for at least one minute.
+
+## Synchronization
+
+The iPhone sends `SCLK` probes to the desktop host's control port. Each probe
+returns host receive and send timestamps. The app computes host minus iPhone
+clock offset and network RTT using the four timestamps, then chooses the recent
+sample with the lowest RTT. It continues probing every five seconds after the
+initial eight responses. It waits for a valid clock sample before playing.
+
+Each audio packet carries the host time when its first frame should play. The
+iPhone translates that time to its local monotonic clock and schedules the
+AVAudioPlayerNode start at that time plus a 20 ms safety delay, less the audio
+session's reported output pipeline latency. Packets arriving too late for a
+100 ms scheduling lead are skipped before playback starts. The UI shows host
+offset, RTT, queued audio, presentation delay, and estimated sync error. Xcode's
+console logs those values once per second while playing.
+
+**Estimated sync error** compares the player node's render position with the
+scheduled start and latest clock offset. It is an engine timing estimate, not a
+microphone or acoustic measurement. Output latency reported by the system can
+differ from the physical speaker path, especially with Bluetooth accessories.
+The approximately 20 ms audible target therefore needs a physical two-device
+measurement. To measure it, record both the desktop output and iPhone speaker
+with a common recorder or calibrated microphones, correlate a transient in the
+two waveforms, and compare their event times. Save the iPhone's console lines
+and route/output latency alongside that result. The repository's simulator
+tests validate the protocol math and scheduling arithmetic only.

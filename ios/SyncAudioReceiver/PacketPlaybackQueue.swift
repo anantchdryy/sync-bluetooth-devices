@@ -28,6 +28,16 @@ struct PacketPlaybackQueue {
         return last > first ? last - first : 0
     }
 
+    var firstPacket: AudioPacket? {
+        guard let first = packets.keys.min() else { return nil }
+        return packets[first]
+    }
+
+    mutating func discard(beforeHostNanoseconds timestamp: Double) {
+        packets = packets.filter { Double($0.value.presentationTimestampNanoseconds) >= timestamp }
+        cursor = packets.keys.min()
+    }
+
     mutating func insert(_ packet: AudioPacket) {
         if sessionID != packet.sessionID || sampleRate != packet.sampleRate || channels != packet.channels {
             self = PacketPlaybackQueue()
