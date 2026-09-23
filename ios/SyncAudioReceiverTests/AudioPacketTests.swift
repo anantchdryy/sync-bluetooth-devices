@@ -101,7 +101,7 @@ final class AudioPacketTests: XCTestCase {
     func testControlWelcomeValidation() {
         let welcome = HostWelcome(line: "WELCOME 42 1 40100 40101 48000 2 192.168.1.10")
         XCTAssertEqual(welcome?.sessionID, 42)
-        XCTAssertEqual(welcome?.hostIPv4.rawValue, "192.168.1.10")
+        XCTAssertEqual(welcome.map { String(describing: $0.hostIPv4) }, "192.168.1.10")
         XCTAssertNil(HostWelcome(line: "WELCOME 42 1 40100 40101 0 2 192.168.1.10"))
         XCTAssertNil(HostWelcome(line: "WELCOME 42 1 40100 40101 48000 2 bad-host"))
     }

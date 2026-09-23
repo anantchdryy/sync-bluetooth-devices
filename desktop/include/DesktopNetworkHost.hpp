@@ -21,6 +21,8 @@ struct DesktopNetworkHostStats {
   std::uint64_t sessionId{};
   std::uint64_t packetsSent{};
   std::uint64_t framesSent{};
+  std::uint64_t audioDatagramBytesSent{};
+  double sendDurationSeconds{};
   std::uint16_t framesPerPacket{};
   double packetDurationMilliseconds{};
 };

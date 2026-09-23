@@ -63,7 +63,7 @@ final class ReceiverViewModel: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.awaitingDiscoveredWelcome else { return }
                 self.awaitingDiscoveredWelcome = false
-                self.hostIP = welcome.hostIPv4.rawValue
+                self.hostIP = String(describing: welcome.hostIPv4)
                 self.portText = String(welcome.audioPort)
                 self.controlPortText = String(welcome.clockPort)
                 self.startStream(host: welcome.hostIPv4,

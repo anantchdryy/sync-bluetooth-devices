@@ -149,6 +149,8 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
   std::vector<std::int16_t> samples(framesPerPacket * channelCount);
   std::uint64_t startFrame = 0;
   std::uint32_t sequenceNumber = 0;
+  auto firstSend = std::chrono::steady_clock::time_point{};
+  auto lastSend = firstSend;
 
   while (true) {
     const auto framesRead = decoder.read(samples, framesPerPacket);
@@ -181,13 +183,22 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
     packet.pcmPayload = toLittleEndianPcm(
         std::span<const std::int16_t>(samples.data(), sampleCount));
 
-    sender.send(PacketSerializer::serialize(packet));
+    const auto datagram = PacketSerializer::serialize(packet);
+    if (stats.packetsSent == 0) firstSend = std::chrono::steady_clock::now();
+    sender.send(datagram);
+    lastSend = std::chrono::steady_clock::now();
+    stats.audioDatagramBytesSent += datagram.size();
     ++stats.packetsSent;
     stats.framesSent += framesRead;
     startFrame += framesRead;
     if (config_.progressFrame) {
       config_.progressFrame->store(startFrame, std::memory_order_release);
     }
+  }
+
+  if (stats.packetsSent > 1) {
+    stats.sendDurationSeconds =
+        std::chrono::duration<double>(lastSend - firstSend).count();
   }
 
   return stats;

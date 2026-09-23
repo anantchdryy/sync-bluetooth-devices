@@ -200,7 +200,14 @@ void runHost(const CommandLine &commandLine) {
             << "Frames sent:     " << stats.framesSent << '\n'
             << "Frames/packet:   " << stats.framesPerPacket << '\n'
             << "Packet duration: " << stats.packetDurationMilliseconds
-            << " ms\n";
+            << " ms\n"
+            << "Audio datagram bytes: " << stats.audioDatagramBytesSent << '\n';
+  if (stats.sendDurationSeconds > 0) {
+    std::cout << "Audio UDP payload rate: "
+              << stats.audioDatagramBytesSent * 8.0 /
+                     stats.sendDurationSeconds / 1'000.0
+              << " kbps (excludes IP/UDP headers)\n";
+  }
   printPlaybackSummary(player);
 }
 
