@@ -4,6 +4,7 @@
 #include "DesktopNetworkHost.hpp"
 #include "ControlChannel.hpp"
 #include "DiscoveryService.hpp"
+#include "Room.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -29,6 +30,7 @@ struct CommandLine {
   std::string argument;
   std::string destinationAddress{"255.255.255.255"};
   std::string bindAddress{"0.0.0.0"};
+  std::string roomName{"Tandem Audio"};
   std::uint16_t audioPort{40'100};
   std::uint16_t clockSyncPort{40'101};
   std::uint16_t sessionPort{40'102};
@@ -44,7 +46,7 @@ void printUsage() {
       << "  syncaudio path/to/file.wav\n"
       << "  syncaudio host path/to/file.wav [--address IPv4] [--port PORT] "
          "[--control-port PORT] [--session-port PORT] "
-         "[--output-latency-ms -1000..1000]\n"
+         "[--output-latency-ms -1000..1000] [--room-name NAME]\n"
 #ifndef NDEBUG
       << "    Debug host only: [--impair-loss PERCENT] [--impair-delay MS] "
          "[--impair-jitter MS] [--impair-duplicate PERCENT] "
@@ -130,6 +132,9 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
       result.sessionPort = parsePort(argv[++index]);
     } else if (option == "--output-latency-ms" && index + 1 < argc) {
       result.outputLatencyAdjustment = parseOutputLatency(argv[++index]);
+    } else if (option == "--room-name" && index + 1 < argc &&
+               result.mode == Mode::Host) {
+      result.roomName = argv[++index];
 #ifndef NDEBUG
     } else if (result.mode == Mode::Host && index + 1 < argc &&
                option.starts_with("--impair-")) {
@@ -202,15 +207,20 @@ void runHost(const CommandLine &commandLine) {
   player.load(commandLine.argument);
   printMetadata(player.metadata());
 
+  auto room = Room::create(commandLine.roomName, "desktop-host");
+  const auto roomIdentity = room.snapshot();
+
   DesktopNetworkHostConfig config;
   config.destinationAddress = commandLine.destinationAddress;
   config.port = commandLine.audioPort;
   config.hostOutputLatency = commandLine.outputLatencyAdjustment;
-  std::random_device random;
-  config.sessionId = (static_cast<std::uint64_t>(random()) << 32U) | random();
-  if (config.sessionId == 0) config.sessionId = 1;
+  config.sessionId = roomIdentity.sessionId;
+  config.streamId = roomIdentity.streamId;
+  config.room = &room;
   ControlStreamState controlState;
   controlState.sessionId = config.sessionId;
+  controlState.streamId = config.streamId;
+  controlState.room = &room;
   controlState.audioPort = config.port;
   controlState.clockPort = commandLine.clockSyncPort;
   controlState.sampleRate = player.metadata().sampleRate;
@@ -224,7 +234,8 @@ void runHost(const CommandLine &commandLine) {
   ClockSyncServer clockServer("0.0.0.0", commandLine.clockSyncPort);
   std::unique_ptr<DiscoveryService> discovery;
   try {
-    discovery = std::make_unique<DiscoveryService>(commandLine.sessionPort);
+    discovery = std::make_unique<DiscoveryService>(
+        commandLine.sessionPort, roomIdentity.roomName, roomIdentity.roomId);
     controlState.hostAddress = discovery->hostAddress();
   } catch (const std::exception &error) {
     std::cerr << "LAN discovery unavailable: " << error.what() << '\n';
@@ -232,8 +243,9 @@ void runHost(const CommandLine &commandLine) {
   }
   ControlServer controlServer(commandLine.sessionPort, controlState);
 
-  std::cout << "UDP destination: " << config.destinationAddress << ':'
-            << config.port << '\n'
+  std::cout << "Room: " << roomIdentity.roomName << " ("
+            << roomIdentity.roomId << ")\n"
+            << "Per-client UDP port: " << config.port << '\n'
             << "Clock-sync port: " << commandLine.clockSyncPort << '\n'
             << "Session TCP port: " << commandLine.sessionPort << '\n'
             << "Discovered as:    " << controlState.hostAddress << '\n'
@@ -244,6 +256,7 @@ void runHost(const CommandLine &commandLine) {
 
   const auto scheduledStart = PlaybackClock::now() + config.sendAhead;
   player.playAt(scheduledStart);
+  room.setPlaybackState(RoomPlaybackState::Playing);
   controlState.playing.store(true, std::memory_order_release);
   const auto playbackStart = player.expectedPlaybackTimestamp(0);
   if (!playbackStart) {
@@ -255,11 +268,14 @@ void runHost(const CommandLine &commandLine) {
       host.streamFile(commandLine.argument, *playbackStart, metadata.sampleRate,
                       static_cast<std::uint16_t>(metadata.channels));
   waitForPlayback(player);
+  room.setPlaybackState(RoomPlaybackState::Stopped);
   controlState.playing.store(false, std::memory_order_release);
 
   std::cout << "Network stream finished.\n"
             << "Session ID:      " << stats.sessionId << '\n'
             << "Packets sent:    " << stats.packetsSent << '\n'
+            << "Client datagrams sent: " << stats.datagramsSent << '\n'
+            << "Client send failures: " << stats.clientSendFailures << '\n'
             << "Frames sent:     " << stats.framesSent << '\n'
             << "Frames/packet:   " << stats.framesPerPacket << '\n'
             << "Packet duration: " << stats.packetDurationMilliseconds

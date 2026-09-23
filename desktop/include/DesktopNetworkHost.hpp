@@ -13,6 +13,8 @@
 #include <functional>
 #include <string>
 
+class Room;
+
 struct DesktopNetworkHostConfig {
   std::string destinationAddress{"255.255.255.255"};
   std::uint16_t port{40'100};
@@ -20,6 +22,8 @@ struct DesktopNetworkHostConfig {
   std::chrono::milliseconds sendAhead{500};
   std::chrono::milliseconds hostOutputLatency{};
   std::uint64_t sessionId{};
+  std::uint32_t streamId{1};
+  Room *room{};
   std::atomic<std::uint64_t> *progressFrame{};
   std::function<bool()> outputRouteChanged;
 #ifndef NDEBUG
@@ -32,6 +36,8 @@ struct DesktopNetworkHostStats {
   std::uint64_t packetsSent{};
   std::uint64_t framesSent{};
   std::uint64_t audioDatagramBytesSent{};
+  std::uint64_t datagramsSent{};
+  std::uint64_t clientSendFailures{};
   double sendDurationSeconds{};
   std::uint16_t framesPerPacket{};
   double packetDurationMilliseconds{};

@@ -7,7 +7,9 @@
 // Advertises the host's TCP control endpoint via DNS-SD on the local LAN.
 class DiscoveryService {
 public:
-  explicit DiscoveryService(std::uint16_t controlPort);
+  explicit DiscoveryService(std::uint16_t controlPort,
+                            std::string roomName = "Tandem Audio",
+                            std::string roomId = "");
   ~DiscoveryService();
   DiscoveryService(const DiscoveryService &) = delete;
   DiscoveryService &operator=(const DiscoveryService &) = delete;

@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 constexpr char serviceType[] = "_tandemaudio._tcp.local.";
@@ -68,7 +69,9 @@ std::string addressText(const sockaddr_in &address) {
 
 class DiscoveryService::Impl {
 public:
-  explicit Impl(std::uint16_t controlPort) : port_(controlPort) {
+  explicit Impl(std::uint16_t controlPort, std::string roomName,
+                std::string roomId)
+      : port_(controlPort), roomId_(std::move(roomId)) {
     if (port_ == 0) throw std::invalid_argument("Discovery control port is invalid");
 #ifdef _WIN32
     WSADATA data{};
@@ -79,7 +82,9 @@ public:
       hostname_ = localHostname();
       address_ = localIPv4(hostname_);
       hostAddress_ = addressText(address_);
-      serviceName_ = "Tandem Audio on " + hostname_ + "." + serviceType;
+      auto instanceName = roomName + " on " + hostname_;
+      if (instanceName.size() > 63) instanceName.resize(63);
+      serviceName_ = instanceName + "." + serviceType;
       qualifiedHost_ = hostname_ + ".local.";
       socket_ = mdns_socket_open_ipv4(&address_);
       if (socket_ < 0) throw std::runtime_error("Unable to open mDNS socket");
@@ -143,8 +148,18 @@ private:
     return record;
   }
 
+  mdns_record_t roomRecord() const {
+    mdns_record_t record{};
+    record.name = dnsName(serviceName_);
+    record.type = MDNS_RECORDTYPE_TXT;
+    record.data.txt.key = {"room", 4};
+    record.data.txt.value = dnsName(roomId_);
+    record.ttl = 120;
+    return record;
+  }
+
   void announce(bool goodbye = false) {
-    auto additional = std::array{srvRecord(), addressRecord(), versionRecord()};
+    auto additional = std::array{srvRecord(), addressRecord(), versionRecord(), roomRecord()};
     alignas(4) std::array<char, 2048> buffer{};
     if (goodbye)
       mdns_goodbye_multicast(socket_, buffer.data(), buffer.size(), ptrRecord(),
@@ -166,7 +181,7 @@ private:
                                           nameBuffer.data(), nameBuffer.size());
     const std::string asked(name.str, name.length);
     mdns_record_t answer{};
-    std::array<mdns_record_t, 3> extra{};
+    std::array<mdns_record_t, 4> extra{};
     std::size_t extraCount = 0;
     if (asked == self.serviceType_ &&
         (type == MDNS_RECORDTYPE_PTR || type == MDNS_RECORDTYPE_ANY)) {
@@ -174,11 +189,13 @@ private:
       extra[extraCount++] = self.srvRecord();
       extra[extraCount++] = self.addressRecord();
       extra[extraCount++] = self.versionRecord();
+      extra[extraCount++] = self.roomRecord();
     } else if (asked == self.serviceName_ &&
                (type == MDNS_RECORDTYPE_SRV || type == MDNS_RECORDTYPE_ANY)) {
       answer = self.srvRecord();
       extra[extraCount++] = self.addressRecord();
       extra[extraCount++] = self.versionRecord();
+      extra[extraCount++] = self.roomRecord();
     } else if (asked == self.qualifiedHost_ &&
                (type == MDNS_RECORDTYPE_A || type == MDNS_RECORDTYPE_ANY)) {
       answer = self.addressRecord();
@@ -229,13 +246,16 @@ private:
   std::string hostAddress_;
   std::string qualifiedHost_;
   std::string serviceName_;
+  std::string roomId_;
   const std::string serviceType_{serviceType};
   std::atomic_bool stop_{false};
   std::thread thread_;
 };
 
-DiscoveryService::DiscoveryService(std::uint16_t controlPort)
-    : impl_(std::make_unique<Impl>(controlPort)) {}
+DiscoveryService::DiscoveryService(std::uint16_t controlPort,
+                                   std::string roomName, std::string roomId)
+    : impl_(std::make_unique<Impl>(controlPort, std::move(roomName),
+                                   std::move(roomId))) {}
 DiscoveryService::~DiscoveryService() = default;
 const std::string &DiscoveryService::hostAddress() const noexcept {
   return impl_->hostAddress();

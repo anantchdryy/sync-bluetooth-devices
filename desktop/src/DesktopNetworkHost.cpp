@@ -2,6 +2,7 @@
 
 #include "AudioPacket.hpp"
 #include "PacketSerializer.hpp"
+#include "Room.hpp"
 #include "UdpAudioSender.hpp"
 
 #include <algorithm>
@@ -95,7 +96,7 @@ toLittleEndianPcm(std::span<const std::int16_t> samples) {
 
 DesktopNetworkHost::DesktopNetworkHost(DesktopNetworkHostConfig config)
     : config_(std::move(config)) {
-  if (config_.port == 0) {
+  if (config_.port == 0 || config_.streamId == 0) {
     throw std::invalid_argument("Host UDP port must be non-zero");
   }
   if (config_.desiredPacketDuration <= std::chrono::milliseconds::zero()) {
@@ -148,6 +149,23 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
                                      static_cast<double>(sampleRate);
 
   UdpAudioSender sender(config_.destinationAddress, config_.port);
+  const auto deliver = [&](std::span<const std::byte> bytes) {
+    if (config_.room) {
+      for (const auto &member : config_.room->snapshot().members) {
+        try {
+          sender.sendTo(bytes, member.ipv4Address, member.audioPort);
+          stats.audioDatagramBytesSent += bytes.size();
+          ++stats.datagramsSent;
+        } catch (const std::exception &) {
+          ++stats.clientSendFailures;
+        }
+      }
+    } else {
+      sender.send(bytes);
+      stats.audioDatagramBytesSent += bytes.size();
+      ++stats.datagramsSent;
+    }
+  };
 #ifndef NDEBUG
   std::optional<NetworkImpairment> impairment;
   if (config_.impairment) impairment.emplace(*config_.impairment);
@@ -156,7 +174,7 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
         std::chrono::steady_clock::now().time_since_epoch());
   };
   const auto dispatchReady = [&] {
-    for (const auto &ready : impairment->drain(impairmentNow())) sender.send(ready.bytes);
+    for (const auto &ready : impairment->drain(impairmentNow())) deliver(ready.bytes);
   };
 #endif
   // SAUD timestamps now refer to estimated acoustic presentation, including
@@ -186,6 +204,7 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
         static_cast<std::size_t>(framesRead) * channelCount;
     AudioPacket packet;
     packet.sessionId = stats.sessionId;
+    packet.streamId = config_.streamId;
     packet.sequenceNumber = sequenceNumber++;
     packet.sampleRate = sampleRate;
     packet.channelCount = channelCount;
@@ -209,9 +228,8 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
       dispatchReady();
     } else
 #endif
-      sender.send(datagram);
+      deliver(datagram);
     lastSend = std::chrono::steady_clock::now();
-    stats.audioDatagramBytesSent += datagram.size();
     ++stats.packetsSent;
     stats.framesSent += framesRead;
     startFrame += framesRead;

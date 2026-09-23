@@ -22,6 +22,10 @@ final class ReceiverViewModel: ObservableObject {
     @Published private(set) var discoveredHosts = [DiscoveredHost]()
     @Published private(set) var discoveryStatus = "Starting discovery"
     @Published private(set) var controlStatus = "Disconnected"
+    @Published private(set) var roomName = ""
+    @Published private(set) var roomId = ""
+    @Published private(set) var hostPlaybackState = "Unknown"
+    @Published private(set) var hostPlaybackFrame: UInt64 = 0
     @Published private(set) var snapshot = ReceiverSnapshot()
     @Published private(set) var playback = PlaybackSnapshot()
     @Published private(set) var clockEstimate: ClockEstimate?
@@ -37,6 +41,7 @@ final class ReceiverViewModel: ObservableObject {
     private let discovery = HostDiscovery()
     private let control = HostControlChannel()
     private var expectedSessionID: UInt64?
+    private var lastClientReport = 0.0
 
     init() {
         receiver.onSnapshot = { [weak self] snapshot in
@@ -53,12 +58,14 @@ final class ReceiverViewModel: ObservableObject {
         }
         audio.onSnapshot = { [weak self] playback in
             DispatchQueue.main.async { [weak self] in
-                self?.playback = playback
-                if self?.calibrationAdjustmentMs != playback.manualCalibrationMilliseconds {
-                    self?.calibrationAdjustmentMs = playback.manualCalibrationMilliseconds
+                guard let self else { return }
+                self.playback = playback
+                if self.calibrationAdjustmentMs != playback.manualCalibrationMilliseconds {
+                    self.calibrationAdjustmentMs = playback.manualCalibrationMilliseconds
                 }
-                if playback.state == "Playing" { self?.connectionState = .playing }
-                else if playback.state == "Buffering" { self?.connectionState = .buffering }
+                if playback.state == "Playing" { self.connectionState = .playing }
+                else if playback.state == "Buffering" { self.connectionState = .buffering }
+                self.reportClientState()
             }
         }
         clock.onEstimate = { [weak self] estimate in
@@ -92,6 +99,21 @@ final class ReceiverViewModel: ObservableObject {
                 self.clock.stop()
                 self.expectedSessionID = nil
                 self.connectionState = .reconnecting
+            }
+        }
+        control.onRoom = { [weak self] id, name in
+            DispatchQueue.main.async { [weak self] in
+                self?.roomId = id
+                self?.roomName = name
+            }
+        }
+        control.onSyncAt = { [weak self] hostTimestamp in
+            self?.audio.updateRoomSyncPoint(hostTimestamp)
+        }
+        control.onHostPlayback = { [weak self] state, frame in
+            DispatchQueue.main.async { [weak self] in
+                self?.hostPlaybackState = state
+                self?.hostPlaybackFrame = frame
             }
         }
         control.onWelcome = { [weak self] welcome in
@@ -205,5 +227,28 @@ final class ReceiverViewModel: ObservableObject {
 
     func applyCalibration() {
         audio.setManualCalibration(milliseconds: calibrationAdjustmentMs)
+    }
+
+    private func reportClientState() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard isListening, now - lastClientReport >= 1 else { return }
+        lastClientReport = now
+        let state: String
+        switch connectionState {
+        case .playing: state = "SYNCED"
+        case .degraded: state = "DEGRADED"
+        case .buffering: state = "BUFFERING"
+        case .syncing: state = "SYNCING"
+        case .reconnecting: state = "RECONNECTING"
+        default: state = "CONNECTED"
+        }
+        control.updateClientState(state,
+            rtt: clockEstimate?.roundTripMilliseconds ?? 0,
+            jitter: snapshot.networkJitterMilliseconds,
+            loss: snapshot.packetLossPercent,
+            buffer: playback.queuedMilliseconds,
+            syncError: playback.estimatedSyncErrorMilliseconds ?? 0,
+            outputLatency: playback.effectiveOutputLatencyMilliseconds ?? 0,
+            offset: clockEstimate?.offsetMilliseconds ?? 0)
     }
 }

@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+class Room;
+
 struct ControlStreamState {
   std::uint64_t sessionId{};
   std::uint32_t streamId{1};
@@ -15,6 +17,7 @@ struct ControlStreamState {
   std::uint16_t channels{};
   std::atomic<std::uint64_t> currentFrame{0};
   std::atomic<bool> playing{false};
+  Room *room{};
 };
 
 // Bounded line-oriented TCP control protocol. PCM remains on UDP.

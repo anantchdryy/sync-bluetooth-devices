@@ -11,6 +11,7 @@ add_library(syncaudio_core STATIC
     src/PacketSerializer.cpp
     src/PlaybackClock.cpp
     src/OutputLatency.cpp
+    src/Room.cpp
 )
 target_include_directories(syncaudio_core PUBLIC include)
 target_compile_features(syncaudio_core PUBLIC cxx_std_20)

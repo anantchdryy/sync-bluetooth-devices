@@ -17,6 +17,8 @@ public:
   UdpAudioSender &operator=(UdpAudioSender &&) noexcept;
 
   void send(std::span<const std::byte> datagram) const;
+  void sendTo(std::span<const std::byte> datagram,
+              const std::string &ipv4Address, std::uint16_t port) const;
 
   [[nodiscard]] const std::string &destinationAddress() const noexcept;
   [[nodiscard]] std::uint16_t port() const noexcept;

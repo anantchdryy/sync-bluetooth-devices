@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -66,6 +69,21 @@ public:
       cleanup();
       throw std::runtime_error("Unable to create UDP socket: " + error);
     }
+#ifdef _WIN32
+    u_long nonblocking = 1;
+    if (ioctlsocket(socket_, FIONBIO, &nonblocking) != 0) {
+      const auto error = socketError();
+      cleanup();
+      throw std::runtime_error("Unable to make UDP socket nonblocking: " + error);
+    }
+#else
+    const auto flags = fcntl(socket_, F_GETFL, 0);
+    if (flags < 0 || fcntl(socket_, F_SETFL, flags | O_NONBLOCK) != 0) {
+      const auto error = socketError();
+      cleanup();
+      throw std::runtime_error("Unable to make UDP socket nonblocking: " + error);
+    }
+#endif
 
     const int enabled = 1;
     if (setsockopt(socket_, SOL_SOCKET, SO_BROADCAST,
@@ -89,6 +107,22 @@ public:
   ~Impl() { cleanup(); }
 
   void send(std::span<const std::byte> datagram) const {
+    sendToAddress(datagram, destination_);
+  }
+
+  void sendTo(std::span<const std::byte> datagram,
+              const std::string &ipv4Address, std::uint16_t port) const {
+    sockaddr_in destination{};
+    destination.sin_family = AF_INET;
+    destination.sin_port = htons(port);
+    if (port == 0 || inet_pton(AF_INET, ipv4Address.c_str(),
+                               &destination.sin_addr) != 1)
+      throw std::invalid_argument("Room client endpoint is not valid IPv4");
+    sendToAddress(datagram, destination);
+  }
+
+  void sendToAddress(std::span<const std::byte> datagram,
+                     const sockaddr_in &destination) const {
     if (datagram.empty() ||
         datagram.size() > PacketSerializer::MaximumDatagramSize) {
       throw std::invalid_argument("UDP audio datagram size is invalid");
@@ -101,11 +135,11 @@ public:
 #endif
     const auto sent =
         sendto(socket_, reinterpret_cast<const char *>(datagram.data()), size,
-               0, reinterpret_cast<const sockaddr *>(&destination_),
+               0, reinterpret_cast<const sockaddr *>(&destination),
 #ifdef _WIN32
-               static_cast<int>(sizeof(destination_)));
+               static_cast<int>(sizeof(destination)));
 #else
-               static_cast<socklen_t>(sizeof(destination_)));
+               static_cast<socklen_t>(sizeof(destination)));
 #endif
     if (sent < 0 || static_cast<std::size_t>(sent) != datagram.size()) {
       throw std::runtime_error("Unable to send UDP audio packet: " +
@@ -152,6 +186,12 @@ UdpAudioSender &UdpAudioSender::operator=(UdpAudioSender &&) noexcept = default;
 
 void UdpAudioSender::send(std::span<const std::byte> datagram) const {
   impl_->send(datagram);
+}
+
+void UdpAudioSender::sendTo(std::span<const std::byte> datagram,
+                            const std::string &ipv4Address,
+                            std::uint16_t port) const {
+  impl_->sendTo(datagram, ipv4Address, port);
 }
 
 const std::string &UdpAudioSender::destinationAddress() const noexcept {

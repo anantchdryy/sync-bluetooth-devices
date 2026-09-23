@@ -39,6 +39,10 @@ struct ContentView: View {
                 }
 
                 Section("Connection") {
+                    if !model.roomName.isEmpty {
+                        LabeledContent("Room", value: model.roomName)
+                        LabeledContent("Host", value: model.hostPlaybackState)
+                    }
                     LabeledContent("Phase", value: model.connectionState.rawValue)
                     LabeledContent("State", value: model.snapshot.status)
                     LabeledContent("Control", value: model.controlStatus)

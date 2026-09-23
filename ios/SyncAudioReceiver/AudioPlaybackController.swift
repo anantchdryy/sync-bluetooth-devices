@@ -45,6 +45,7 @@ final class AudioPlaybackController {
     private var startClockOffsetNanoseconds: Double?
     private var lastLog = 0.0
     private var receivedPackets = 0
+    private var minimumHostStartNanoseconds: UInt64?
 
     func start() {
         queue.async { [weak self] in
@@ -97,6 +98,13 @@ final class AudioPlaybackController {
     func updateClock(_ estimate: ClockEstimate?) {
         queue.async { [weak self] in
             self?.clockEstimate = estimate
+            self?.pump()
+        }
+    }
+
+    func updateRoomSyncPoint(_ hostTimestampNanoseconds: UInt64) {
+        queue.async { [weak self] in
+            self?.minimumHostStartNanoseconds = hostTimestampNanoseconds
             self?.pump()
         }
     }
@@ -172,10 +180,11 @@ final class AudioPlaybackController {
         let targetFrames = Int(Double(sampleRate) *
                                (snapshot.targetBufferMilliseconds + 70) / 1_000)
         if !primed && queuedFrames == 0 {
-            let minimumTimestamp = PlaybackTiming.minimumPacketTimestamp(
+            let minimumTimestamp = max(PlaybackTiming.minimumPacketTimestamp(
                 estimate: clockEstimate,
                 outputLatencyNanoseconds: outputLatency?.effectiveLatencyNs ?? 0,
-                nowNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                nowNanoseconds: DispatchTime.now().uptimeNanoseconds),
+                Double(minimumHostStartNanoseconds ?? 0))
             packets.discard(beforeHostNanoseconds: minimumTimestamp)
         }
         if !primed && Int(packets.bufferedFrames) < prebufferFrames { return }
@@ -373,6 +382,7 @@ final class AudioPlaybackController {
         primed = false
         format = nil
         outputLatency = nil
+        minimumHostStartNanoseconds = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

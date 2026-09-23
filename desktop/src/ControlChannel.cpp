@@ -1,10 +1,14 @@
 #include "ControlChannel.hpp"
+#include "Room.hpp"
 
 #include <array>
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <memory>
+#include <cmath>
+#include <sstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -67,15 +71,39 @@ bool validDeviceId(const std::string &id) {
   return true;
 }
 
-std::string responseFor(const std::string &line, ControlStreamState &state) {
+std::string responseFor(const std::string &line, ControlStreamState &state,
+                        const std::string &peerAddress,
+                        std::string &joinedDeviceId,
+                        std::uint64_t &membershipToken) {
+  if (line == "HELLO 2") return "VERSION 2\n";
+  if (line.rfind("HELLO ", 0) == 0) return "ERROR protocol-version\n";
   if (line.rfind("JOIN ", 0) == 0) {
-    if (!validDeviceId(line.substr(5))) return "ERROR invalid-device-id\n";
-    return "WELCOME " + std::to_string(state.sessionId) + " " +
+    const auto deviceId = line.substr(5);
+    if (!validDeviceId(deviceId)) return "ERROR invalid-device-id\n";
+    if (state.room) {
+      if (!joinedDeviceId.empty()) state.room->leave(joinedDeviceId, membershipToken);
+      membershipToken = state.room->join(deviceId, peerAddress, state.audioPort);
+      joinedDeviceId = deviceId;
+    }
+    std::string response = "WELCOME " + std::to_string(state.sessionId) + " " +
            std::to_string(state.streamId) + " " +
            std::to_string(state.audioPort) + " " +
            std::to_string(state.clockPort) + " " +
            std::to_string(state.sampleRate) + " " +
            std::to_string(state.channels) + " " + state.hostAddress + "\n";
+    if (state.room) {
+      const auto room = state.room->snapshot();
+      const auto syncAt = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch() +
+          std::chrono::milliseconds(500)).count();
+      response += "ROOM " + room.roomId + " " + room.roomName + "\n";
+      response += "SYNC_AT " + std::to_string(syncAt) + "\n";
+      response += std::string("HOST_STATE ") +
+          (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
+          std::to_string(state.sessionId) + " " +
+          std::to_string(state.currentFrame.load(std::memory_order_acquire)) + "\n";
+    }
+    return response;
   }
   if (line == "HOST_STATE") {
     return std::string("HOST_STATE ") +
@@ -83,7 +111,39 @@ std::string responseFor(const std::string &line, ControlStreamState &state) {
            std::to_string(state.sessionId) + " " +
            std::to_string(state.currentFrame.load(std::memory_order_acquire)) + "\n";
   }
-  if (line.rfind("CLIENT_STATE ", 0) == 0) return "OK\n";
+  if (line.rfind("CLIENT_STATE ", 0) == 0) {
+    if (!state.room) return "OK\n";
+    if (joinedDeviceId.empty()) return "ERROR not-joined\n";
+    std::istringstream input(line.substr(13));
+    std::string status, trailing;
+    auto snapshot = state.room->snapshot();
+    const auto member = std::find_if(snapshot.members.begin(), snapshot.members.end(),
+        [&](const RoomMember &candidate) {
+          return candidate.deviceId == joinedDeviceId &&
+                 candidate.membershipToken == membershipToken;
+        });
+    if (member == snapshot.members.end()) return "ERROR not-joined\n";
+    auto updated = *member;
+    if (!(input >> status >> updated.roundTripMs >> updated.networkJitterMs >>
+          updated.packetLossPercent >> updated.bufferDepthMs >>
+          updated.estimatedSyncErrorMs >> updated.outputLatencyMs >>
+          updated.clockOffsetMs) || input >> trailing)
+      return "ERROR invalid-client-state\n";
+    for (double value : {updated.roundTripMs, updated.networkJitterMs,
+                         updated.packetLossPercent, updated.bufferDepthMs,
+                         updated.estimatedSyncErrorMs, updated.outputLatencyMs,
+                         updated.clockOffsetMs})
+      if (!std::isfinite(value) || std::abs(value) > 1'000'000)
+        return "ERROR invalid-client-state\n";
+    if (status == "CONNECTED") updated.connectionState = RoomConnectionState::Connected;
+    else if (status == "SYNCING") updated.connectionState = RoomConnectionState::Syncing;
+    else if (status == "BUFFERING") updated.connectionState = RoomConnectionState::Buffering;
+    else if (status == "SYNCED") updated.connectionState = RoomConnectionState::Synced;
+    else if (status == "DEGRADED") updated.connectionState = RoomConnectionState::Degraded;
+    else if (status == "RECONNECTING") updated.connectionState = RoomConnectionState::Reconnecting;
+    else return "ERROR invalid-client-state\n";
+    return state.room->updateMember(updated) ? "OK\n" : "ERROR not-joined\n";
+  }
   if (line == "LEAVE") return "BYE\n";
   if (line == "PLAY" || line == "PAUSE" || line.rfind("SEEK ", 0) == 0)
     return "ERROR unsupported-command\n";
@@ -172,23 +232,33 @@ private:
 #endif
       const auto client = accept(listener_, reinterpret_cast<sockaddr *>(&peer), &length);
       if (client == invalidSocket) continue;
+      std::array<char, INET_ADDRSTRLEN> addressText{};
+      if (!inet_ntop(AF_INET, &peer.sin_addr, addressText.data(),
+                     addressText.size())) {
+        closeSocket(client);
+        continue;
+      }
       if (clients_.size() >= 32) {
         closeSocket(client);
         continue;
       }
       auto active = std::make_shared<std::atomic_bool>(true);
       clients_.push_back(ClientWorker{
-          std::thread(&Impl::serveClient, this, client, active), active});
+          std::thread(&Impl::serveClient, this, client, active,
+                      std::string(addressText.data())), active});
     }
   }
 
-  void serveClient(Socket socket, std::shared_ptr<std::atomic_bool> active) {
+  void serveClient(Socket socket, std::shared_ptr<std::atomic_bool> active,
+                   std::string peerAddress) {
     try { receiveTimeout(socket); } catch (...) {
       closeSocket(socket);
       active->store(false, std::memory_order_release);
       return;
     }
     std::string line;
+    std::string joinedDeviceId;
+    std::uint64_t membershipToken = 0;
     line.reserve(256);
     while (!stop_.load(std::memory_order_acquire)) {
       char character{};
@@ -197,7 +267,8 @@ private:
       if (count < 0) continue; // Timed out; inspect stop flag.
       if (character == '\n') {
         if (!line.empty() && line.back() == '\r') line.pop_back();
-        const auto response = responseFor(line, state_);
+        const auto response = responseFor(line, state_, peerAddress,
+                                          joinedDeviceId, membershipToken);
         if (!sendLine(socket, response) || line == "LEAVE") break;
         line.clear();
       } else if (line.size() < 256 && character >= 32 && character < 127) {
@@ -207,6 +278,8 @@ private:
         break;
       }
     }
+    if (state_.room && !joinedDeviceId.empty())
+      state_.room->leave(joinedDeviceId, membershipToken);
     closeSocket(socket);
     active->store(false, std::memory_order_release);
   }

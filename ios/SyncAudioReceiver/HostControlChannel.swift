@@ -36,6 +36,9 @@ final class HostControlChannel {
     var onWelcome: ((HostWelcome) -> Void)?
     var onState: ((String) -> Void)?
     var onLost: (() -> Void)?
+    var onRoom: ((String, String) -> Void)?
+    var onSyncAt: ((UInt64) -> Void)?
+    var onHostPlayback: ((String, UInt64) -> Void)?
 
     private let queue = DispatchQueue(label: "TandemAudio.control")
     private var connection: NWConnection?
@@ -46,6 +49,7 @@ final class HostControlChannel {
     private var retryAttempt = 0
     private var awaitingWelcomeSeconds = 0
     private var joinedSessionID: UInt64?
+    private var latestClientState: String?
     private var input = Data()
     private let deviceID: String = {
         if let saved = UserDefaults.standard.string(forKey: "TandemAudio.deviceID") {
@@ -83,6 +87,7 @@ final class HostControlChannel {
                 switch state {
                 case .ready:
                     self.onState?("Connected to host")
+                    self.send("HELLO 2")
                     self.send("JOIN \(self.deviceID)")
                     self.receive(generation: currentGeneration)
                     self.startTimer(generation: currentGeneration)
@@ -110,6 +115,18 @@ final class HostControlChannel {
 
     private func send(_ line: String) {
         connection?.send(content: Data((line + "\n").utf8), completion: .contentProcessed { _ in })
+    }
+
+    func updateClientState(_ state: String, rtt: Double, jitter: Double,
+                           loss: Double, buffer: Double, syncError: Double,
+                           outputLatency: Double, offset: Double) {
+        queue.async { [weak self] in
+            let values = [rtt, jitter, loss, buffer, syncError,
+                          outputLatency, offset]
+            guard let self, values.allSatisfy(\.isFinite) else { return }
+            self.latestClientState = "CLIENT_STATE \(state) " +
+                values.map { String($0) }.joined(separator: " ")
+        }
     }
 
     private func receive(generation: Int) {
@@ -146,7 +163,19 @@ final class HostControlChannel {
             if fields.count == 4, let session = UInt64(fields[2]),
                session != joinedSessionID {
                 scheduleRetry(reason: "Host session changed")
-            } else { onState?(line) }
+            } else {
+                onState?(line)
+                if fields.count == 4, let frame = UInt64(fields[3]) {
+                    onHostPlayback?(String(fields[1]), frame)
+                }
+            }
+        } else if line.hasPrefix("ROOM ") {
+            let fields = line.split(separator: " ", maxSplits: 2)
+            if fields.count == 3 { onRoom?(String(fields[1]), String(fields[2])) }
+        } else if line.hasPrefix("SYNC_AT ") {
+            if let value = UInt64(line.dropFirst(8)) { onSyncAt?(value) }
+        } else if line == "VERSION 2" {
+            onState?("Protocol version 2")
         } else if line.hasPrefix("ERROR ") {
             scheduleRetry(reason: "Host rejected session")
         }
@@ -165,6 +194,9 @@ final class HostControlChannel {
                 }
             }
             self.send("HOST_STATE")
+            if self.joinedSessionID != nil, let state = self.latestClientState {
+                self.send(state)
+            }
         }
         self.timer = timer
         timer.resume()
