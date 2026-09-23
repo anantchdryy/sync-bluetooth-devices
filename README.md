@@ -193,7 +193,8 @@ round trip = (t4 - t1) - (t3 - t2)
 host - client offset = ((t2 - t1) + (t3 - t4)) / 2
 ```
 
-Eight samples are requested and the lowest-round-trip sample is used. The client
+Eight samples are requested and the median offset of the three lowest RTT
+samples is used. The client
 repeats this measurement every five seconds. `DriftEstimator` fits recent offset
 samples to estimate the host clock's rate relative to the client clock in parts
 per million. `GradualDriftCorrector` combines that estimate with the current
@@ -213,4 +214,9 @@ and does not include unknown speaker, Bluetooth, or audio-driver output latency.
   miniaudio-backed playback, scheduling, host/client, and CLI
 - `tests` — packet serialization, jitter buffer, clock sync, clock conversion,
   file handling, and WAV metadata tests
-- `ios` — Phase 7 SwiftUI iPhone packet receiver; see [iPhone setup](ios/README.md)
+- `ios` — SwiftUI iPhone receiver with clock synchronization and PCM playback;
+  see [iPhone setup](ios/README.md)
+- [Wi-Fi architecture](docs/WIFI_ARCHITECTURE.md),
+  [failure modes](docs/FAILURE_MODES.md), and
+  [test matrix](docs/TEST_MATRIX.md) document the current transport and its
+  validation limits.

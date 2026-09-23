@@ -8,6 +8,7 @@ section is inferred from a simulator or from host-side loopback traffic.
 | Scenario | Environment | Result | Evidence |
 | --- | --- | --- | --- |
 | Windows desktop unit/integration | local Windows Debug | PASS, 11 CTest targets | `ctest -C Debug` |
+| Windows desktop unit/integration | local Windows Release | PASS, 11 CTest targets | `ctest -C Release` |
 | Packet impairment loss/jitter/delay | seeded in-process simulator | PASS, 100 combinations | `network_impairment_tests` |
 | Blackout | 100, 500, 1000, 2000, 5000 ms simulated | PASS | `network_impairment_tests` |
 | Duplication/reordering | seeded simulator | PASS | `network_impairment_tests` |
@@ -17,6 +18,24 @@ section is inferred from a simulator or from host-side loopback traffic.
 
 These tests verify deterministic packet handling and bounds. They do not
 measure sound from a physical speaker or iOS recovery after a real outage.
+
+## Reproduce the impairment scenarios
+
+Build Debug, then run the host with a known WAV and options such as:
+
+```powershell
+.\build\Debug\syncaudio.exe host .\test.wav --address 192.168.1.255 `
+  --impair-loss 5 --impair-delay 50 --impair-jitter 20 `
+  --impair-duplicate 1 --impair-reorder 5 --impair-blackout 500 `
+  --impair-seed 493
+```
+
+All options affect audio datagrams only, after the host generates them. Clock
+and TCP control traffic remain untouched. The blackout starts with the first
+audio datagram. Release builds reject these options. The host's packet count
+reports generated packets, so the simulator test is the source of delivery
+counts. For real playback measurements, export the iPhone diagnostics while
+the test is active and make a recording that includes both speakers.
 
 ## Physical hardware
 
