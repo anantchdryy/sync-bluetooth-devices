@@ -31,6 +31,7 @@ add_library(desktop_transport STATIC
     desktop/src/ClockSyncTransport.cpp
     desktop/src/ControlChannel.cpp
     desktop/src/DiscoveryService.cpp
+    desktop/src/RoomControlClient.cpp
     desktop/src/UdpAudioReceiver.cpp
     desktop/src/UdpAudioSender.cpp
 )

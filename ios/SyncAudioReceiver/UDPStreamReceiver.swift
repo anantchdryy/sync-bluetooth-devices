@@ -83,6 +83,16 @@ final class UDPStreamReceiver {
         }
     }
 
+    func expectStream(_ streamID: UInt32) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.expectedStreamID = streamID
+            self.accumulator = StreamAccumulator()
+            self.accumulator.setStatus("Waiting for updated stream")
+            self.publish()
+        }
+    }
+
     private func accept(_ connection: NWConnection, generation: Int) {
         guard let expectedHost,
               case let .hostPort(remoteHost, _) = connection.endpoint,

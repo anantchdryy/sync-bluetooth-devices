@@ -24,6 +24,7 @@ struct PlaybackSnapshot {
 /// Runs AVAudioEngine and its queue on one serial dispatch queue.
 final class AudioPlaybackController {
     var onSnapshot: ((PlaybackSnapshot) -> Void)?
+    var onSeekStreamReady: ((UInt32) -> Void)?
 
     private let queue = DispatchQueue(label: "SyncAudioReceiver.audio")
     private let engine = AVAudioEngine()
@@ -46,6 +47,12 @@ final class AudioPlaybackController {
     private var lastLog = 0.0
     private var receivedPackets = 0
     private var minimumHostStartNanoseconds: UInt64?
+    private var scheduledRoomAction: ScheduledHostAction?
+    private var stagedPackets = PacketPlaybackQueue()
+    private var seekReceiverSwitched = false
+    private var roomPaused = false
+    private var lastRoomActionTimestamp: UInt64?
+    private var allowImmediateStart = false
 
     func start() {
         queue.async { [weak self] in
@@ -79,6 +86,12 @@ final class AudioPlaybackController {
         queue.async { [weak self] in
             guard let self, self.active, packet.channels <= 2,
                   (8_000...192_000).contains(packet.sampleRate) else { return }
+            if let action = self.scheduledRoomAction, action.name == "SEEK",
+               packet.streamID == action.nextStreamID {
+                self.stagedPackets.insert(packet)
+                return
+            }
+            if self.roomPaused { return }
             if let sessionID = self.packets.sessionID,
                (sessionID != packet.sessionID || self.packets.streamID != packet.streamID ||
                 self.packets.sampleRate != packet.sampleRate ||
@@ -99,6 +112,27 @@ final class AudioPlaybackController {
         queue.async { [weak self] in
             self?.clockEstimate = estimate
             self?.pump()
+        }
+    }
+
+    func scheduleRoomAction(_ action: ScheduledHostAction) {
+        queue.async { [weak self] in
+            guard let self, self.active else { return }
+            if self.lastRoomActionTimestamp == action.effectiveHostNanoseconds { return }
+            if let current = self.scheduledRoomAction,
+               current.effectiveHostNanoseconds == action.effectiveHostNanoseconds { return }
+            let now = DispatchTime.now().uptimeNanoseconds
+            let hostNow = Double(now) + (self.clockEstimate?.offsetNanoseconds ?? 0)
+            if Double(action.effectiveHostNanoseconds) + 1_000_000_000 < hostNow { return }
+            self.scheduledRoomAction = action
+            self.lastRoomActionTimestamp = action.effectiveHostNanoseconds
+            self.seekReceiverSwitched = false
+            if action.name == "PLAY" {
+                self.roomPaused = false
+                self.resetStream()
+                self.minimumHostStartNanoseconds = action.effectiveHostNanoseconds
+            }
+            self.pump()
         }
     }
 
@@ -162,6 +196,31 @@ final class AudioPlaybackController {
     }
 
     private func pump() {
+        if let action = scheduledRoomAction, let estimate = clockEstimate {
+            let hostNow = Double(DispatchTime.now().uptimeNanoseconds) + estimate.offsetNanoseconds
+            if action.name == "SEEK" && !seekReceiverSwitched &&
+               hostNow >= Double(action.effectiveHostNanoseconds) - 220_000_000 {
+                seekReceiverSwitched = true
+                onSeekStreamReady?(action.nextStreamID)
+            }
+            let outputLead = outputLatency?.effectiveLatencyNs ?? 0
+            if hostNow >= Double(action.effectiveHostNanoseconds) - outputLead {
+                scheduledRoomAction = nil
+                if action.name == "PAUSE" || action.name == "STOP" {
+                    resetStream()
+                    roomPaused = true
+                    snapshot.state = action.name == "PAUSE" ? "Paused by host" : "Stopped by host"
+                    publish()
+                } else if action.name == "SEEK" {
+                    resetStream()
+                    packets = stagedPackets
+                    stagedPackets = PacketPlaybackQueue()
+                    minimumHostStartNanoseconds = action.effectiveHostNanoseconds
+                    allowImmediateStart = true
+                }
+            }
+        }
+        if roomPaused { return }
         guard active, let sampleRate = packets.sampleRate else { return }
         guard let clockEstimate else {
             snapshot.state = "Waiting for host clock"
@@ -179,7 +238,7 @@ final class AudioPlaybackController {
         let prebufferFrames = Int(Double(sampleRate) * snapshot.targetBufferMilliseconds / 1_000)
         let targetFrames = Int(Double(sampleRate) *
                                (snapshot.targetBufferMilliseconds + 70) / 1_000)
-        if !primed && queuedFrames == 0 {
+        if !primed && queuedFrames == 0 && !allowImmediateStart {
             let minimumTimestamp = max(PlaybackTiming.minimumPacketTimestamp(
                 estimate: clockEstimate,
                 outputLatencyNanoseconds: outputLatency?.effectiveLatencyNs ?? 0,
@@ -225,6 +284,7 @@ final class AudioPlaybackController {
             startClockOffsetNanoseconds = clockEstimate.offsetNanoseconds
             player.play(at: AVAudioTime(hostTime: hostTime))
             primed = true
+            allowImmediateStart = false
             snapshot.state = "Playing"
         }
         if primed && queuedFrames == 0 {
@@ -383,6 +443,12 @@ final class AudioPlaybackController {
         format = nil
         outputLatency = nil
         minimumHostStartNanoseconds = nil
+        scheduledRoomAction = nil
+        stagedPackets = PacketPlaybackQueue()
+        seekReceiverSwitched = false
+        roomPaused = false
+        lastRoomActionTimestamp = nil
+        allowImmediateStart = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

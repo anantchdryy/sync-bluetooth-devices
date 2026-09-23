@@ -1,5 +1,6 @@
 #include "ControlChannel.hpp"
 #include "Room.hpp"
+#include "RoomControlClient.hpp"
 
 #include <array>
 #include <stdexcept>
@@ -120,8 +121,14 @@ int main() {
   require(room.snapshot().members.size() == 2, "Concurrent room members missing");
   require(exchange(first, "CLIENT_STATE SYNCED 2 1 0 180 3 35 20\n") == "OK\n",
           "Client health report failed");
-  require(exchange(first, "PLAY\n") == "ERROR unsupported-command\n",
-          "Untrusted client gained host control");
+  require(exchange(first, "PLAY\n").starts_with("SCHEDULED PLAY "),
+          "Local host control was not scheduled");
+  require(room.snapshot().pendingAction.has_value(),
+          "Host control action was not queued");
+  (void)room.takeAction();
+  require(RoomControlClient::issue(roomServer.port(), "PLAY").starts_with("SCHEDULED PLAY "),
+          "Local CLI control client failed");
+  (void)room.takeAction();
   require(exchange(first, "LEAVE\n") == "BYE\n", "Room leave failed");
   closeSocket(first);
   std::this_thread::sleep_for(std::chrono::milliseconds(30));

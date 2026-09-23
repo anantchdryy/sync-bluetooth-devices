@@ -10,6 +10,7 @@
 struct AudioMetadata {
   std::uint32_t sampleRate{};
   std::uint32_t channels{};
+  std::uint64_t totalFrames{};
   double durationSeconds{};
 };
 
@@ -32,6 +33,9 @@ public:
   // Starts playback from the beginning at a steady-clock timestamp. Until that
   // time the output device emits silence.
   void playAt(PlaybackClock::Timestamp startTime);
+  // Starts at an absolute source frame. Used for room resume and seek.
+  void playFrom(PlaybackClock::Frame frame,
+                PlaybackClock::Timestamp startTime);
   void stop() noexcept;
 
   [[nodiscard]] bool isPlaying() const noexcept;

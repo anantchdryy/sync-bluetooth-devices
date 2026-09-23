@@ -5,6 +5,7 @@
 #include "ControlChannel.hpp"
 #include "DiscoveryService.hpp"
 #include "Room.hpp"
+#include "RoomControlClient.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -23,7 +24,7 @@
 
 namespace {
 
-enum class Mode { Local, Host, Client };
+enum class Mode { Local, Host, Client, Control };
 
 struct CommandLine {
   Mode mode{Mode::Local};
@@ -54,7 +55,9 @@ void printUsage() {
          "[--impair-seed INTEGER]\n"
 #endif
       << "  syncaudio client <host-ip> [--bind IPv4] [--port PORT] "
-         "[--control-port PORT] [--output-latency-ms -1000..1000]\n";
+         "[--control-port PORT] [--output-latency-ms -1000..1000]\n"
+      << "  syncaudio control PLAY|PAUSE|STOP|\"SEEK FRAME\" "
+         "[--session-port PORT]\n";
 }
 
 #ifndef NDEBUG
@@ -110,8 +113,10 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     result.mode = Mode::Host;
   } else if (mode == "client") {
     result.mode = Mode::Client;
+  } else if (mode == "control") {
+    result.mode = Mode::Control;
   } else {
-    throw std::invalid_argument("Mode must be 'host' or 'client'");
+    throw std::invalid_argument("Mode must be 'host', 'client', or 'control'");
   }
   result.argument = argv[2];
 
@@ -128,7 +133,7 @@ CommandLine parseCommandLine(int argc, char *argv[]) {
     } else if (option == "--control-port" && index + 1 < argc) {
       result.clockSyncPort = parsePort(argv[++index]);
     } else if (option == "--session-port" && index + 1 < argc &&
-               result.mode == Mode::Host) {
+               (result.mode == Mode::Host || result.mode == Mode::Control)) {
       result.sessionPort = parsePort(argv[++index]);
     } else if (option == "--output-latency-ms" && index + 1 < argc) {
       result.outputLatencyAdjustment = parseOutputLatency(argv[++index]);
@@ -225,12 +230,12 @@ void runHost(const CommandLine &commandLine) {
   controlState.clockPort = commandLine.clockSyncPort;
   controlState.sampleRate = player.metadata().sampleRate;
   controlState.channels = static_cast<std::uint16_t>(player.metadata().channels);
+  controlState.totalFrames = player.metadata().totalFrames;
   config.progressFrame = &controlState.currentFrame;
   config.outputRouteChanged = [&player] { return player.outputRouteChanged(); };
 #ifndef NDEBUG
   config.impairment = commandLine.impairment;
 #endif
-  DesktopNetworkHost host(config);
   ClockSyncServer clockServer("0.0.0.0", commandLine.clockSyncPort);
   std::unique_ptr<DiscoveryService> discovery;
   try {
@@ -254,24 +259,104 @@ void runHost(const CommandLine &commandLine) {
             << config.hostOutputLatency.count() << " ms (manual)\n"
             << "Playing locally and streaming...\n";
 
-  const auto scheduledStart = PlaybackClock::now() + config.sendAhead;
-  player.playAt(scheduledStart);
-  room.setPlaybackState(RoomPlaybackState::Playing);
-  controlState.playing.store(true, std::memory_order_release);
-  const auto playbackStart = player.expectedPlaybackTimestamp(0);
-  if (!playbackStart) {
-    throw std::runtime_error("Playback timeline did not start");
-  }
-
   const auto &metadata = player.metadata();
-  const auto stats =
-      host.streamFile(commandLine.argument, *playbackStart, metadata.sampleRate,
-                      static_cast<std::uint16_t>(metadata.channels));
-  waitForPlayback(player);
+  auto segmentStart = PlaybackClock::now() + config.sendAhead;
+  std::uint64_t frame = 0;
+  DesktopNetworkHostStats stats{};
+  stats.sessionId = config.sessionId;
+  bool stoppedByCommand = false;
+  while (true) {
+    config.streamId = room.snapshot().streamId;
+    controlState.streamId.store(config.streamId, std::memory_order_release);
+    player.playFrom(frame, segmentStart);
+    room.setPlaybackState(RoomPlaybackState::Playing);
+    controlState.playing.store(true, std::memory_order_release);
+    DesktopNetworkHost segment(config);
+    const auto part = segment.streamFile(
+        commandLine.argument, segmentStart, metadata.sampleRate,
+        static_cast<std::uint16_t>(metadata.channels), frame);
+    stats.packetsSent += part.packetsSent;
+    stats.datagramsSent += part.datagramsSent;
+    stats.clientSendFailures += part.clientSendFailures;
+    stats.framesSent += part.framesSent;
+    stats.audioDatagramBytesSent += part.audioDatagramBytesSent;
+    stats.sendDurationSeconds += part.sendDurationSeconds;
+    stats.framesPerPacket = part.framesPerPacket;
+    stats.packetDurationMilliseconds = part.packetDurationMilliseconds;
+    frame = part.lastFrame;
+
+    if (part.sourceExhausted) {
+      waitForPlayback(player);
+      break;
+    }
+    if (!part.endedForCommand)
+      throw std::runtime_error("Room stream ended unexpectedly");
+    const auto command = room.takeAction();
+    if (!command) throw std::runtime_error("Scheduled room action disappeared");
+    const auto effective = PlaybackClock::Timestamp{
+        PlaybackClock::Duration{command->effectiveHostNanoseconds}};
+    const auto cutoff = effective - config.hostOutputLatency -
+        (command->action == RoomAction::Seek ? config.sendAhead
+                                             : std::chrono::milliseconds{0});
+    if (cutoff > PlaybackClock::now()) std::this_thread::sleep_until(cutoff);
+    player.stop();
+    controlState.playing.store(false, std::memory_order_release);
+    controlState.currentFrame.store(frame, std::memory_order_release);
+
+    if (command->action == RoomAction::Stop) {
+      stoppedByCommand = true;
+      break;
+    }
+    if (command->action == RoomAction::Seek) {
+      frame = command->seekFrame;
+      room.setStreamId(command->nextStreamId);
+      controlState.currentFrame.store(frame, std::memory_order_release);
+      segmentStart = effective;
+      continue;
+    }
+    if (command->action == RoomAction::Pause) {
+      room.setPlaybackState(RoomPlaybackState::Paused);
+      bool resume = false;
+      while (!resume) {
+        const auto pending = room.snapshot().pendingAction;
+        if (!pending) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          continue;
+        }
+        if (pending->action == RoomAction::Play) {
+          const auto next = room.takeAction();
+          if (!next) continue;
+          segmentStart = PlaybackClock::Timestamp{
+              PlaybackClock::Duration{next->effectiveHostNanoseconds}};
+          resume = true;
+        } else if (pending->action == RoomAction::Seek) {
+          const auto next = room.takeAction();
+          if (!next) continue;
+          const auto seekAt = PlaybackClock::Timestamp{
+              PlaybackClock::Duration{next->effectiveHostNanoseconds}};
+          if (seekAt > PlaybackClock::now()) std::this_thread::sleep_until(seekAt);
+          frame = next->seekFrame;
+          room.setStreamId(next->nextStreamId);
+          controlState.streamId.store(next->nextStreamId,
+                                      std::memory_order_release);
+          controlState.currentFrame.store(frame, std::memory_order_release);
+        } else if (pending->action == RoomAction::Stop) {
+          const auto next = room.takeAction();
+          if (!next) continue;
+          const auto stopAt = PlaybackClock::Timestamp{
+              PlaybackClock::Duration{next->effectiveHostNanoseconds}};
+          if (stopAt > PlaybackClock::now()) std::this_thread::sleep_until(stopAt);
+          stoppedByCommand = true;
+          break;
+        }
+      }
+      if (stoppedByCommand) break;
+    }
+  }
   room.setPlaybackState(RoomPlaybackState::Stopped);
   controlState.playing.store(false, std::memory_order_release);
 
-  std::cout << "Network stream finished.\n"
+  std::cout << (stoppedByCommand ? "Room stopped.\n" : "Network stream finished.\n")
             << "Session ID:      " << stats.sessionId << '\n'
             << "Packets sent:    " << stats.packetsSent << '\n'
             << "Client datagrams sent: " << stats.datagramsSent << '\n'
@@ -341,6 +426,14 @@ void runClient(const CommandLine &commandLine) {
             << "Underrun frames:           " << stats.underrunFrames << '\n';
 }
 
+void runControl(const CommandLine &commandLine) {
+  const auto response = RoomControlClient::issue(commandLine.sessionPort,
+                                                  commandLine.argument);
+  std::cout << response << '\n';
+  if (response.rfind("SCHEDULED ", 0) != 0)
+    throw std::runtime_error("Room command was rejected: " + response);
+}
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -355,6 +448,9 @@ int main(int argc, char *argv[]) {
       break;
     case Mode::Client:
       runClient(commandLine);
+      break;
+    case Mode::Control:
+      runControl(commandLine);
       break;
     }
     return 0;

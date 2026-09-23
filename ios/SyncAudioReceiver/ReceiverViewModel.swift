@@ -82,6 +82,9 @@ final class ReceiverViewModel: ObservableObject {
                 self?.clockStatus = status
             }
         }
+        audio.onSeekStreamReady = { [weak self] streamID in
+            self?.receiver.expectStream(streamID)
+        }
         discovery.onHosts = { [weak self] hosts in
             DispatchQueue.main.async { [weak self] in self?.discoveredHosts = hosts }
         }
@@ -115,6 +118,9 @@ final class ReceiverViewModel: ObservableObject {
                 self?.hostPlaybackState = state
                 self?.hostPlaybackFrame = frame
             }
+        }
+        control.onScheduledAction = { [weak self] action in
+            self?.audio.scheduleRoomAction(action)
         }
         control.onWelcome = { [weak self] welcome in
             DispatchQueue.main.async { [weak self] in

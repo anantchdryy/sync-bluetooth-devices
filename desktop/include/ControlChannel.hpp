@@ -9,12 +9,13 @@ class Room;
 
 struct ControlStreamState {
   std::uint64_t sessionId{};
-  std::uint32_t streamId{1};
+  std::atomic<std::uint32_t> streamId{1};
   std::uint16_t audioPort{40'100};
   std::uint16_t clockPort{40'101};
   std::string hostAddress;
   std::uint32_t sampleRate{};
   std::uint16_t channels{};
+  std::uint64_t totalFrames{};
   std::atomic<std::uint64_t> currentFrame{0};
   std::atomic<bool> playing{false};
   Room *room{};

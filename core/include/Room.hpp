@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,6 +10,14 @@
 enum class RoomPlaybackState { Stopped, Playing, Paused };
 enum class RoomConnectionState {
   Connected, Syncing, Buffering, Synced, Degraded, Reconnecting
+};
+enum class RoomAction { Play, Pause, Seek, Stop };
+
+struct ScheduledRoomAction {
+  RoomAction action{RoomAction::Play};
+  std::int64_t effectiveHostNanoseconds{};
+  std::uint64_t seekFrame{};
+  std::uint32_t nextStreamId{};
 };
 
 struct RoomMember {
@@ -33,6 +42,8 @@ struct RoomSnapshot {
   std::uint64_t sessionId{};
   std::uint32_t streamId{};
   RoomPlaybackState playbackState{RoomPlaybackState::Stopped};
+  std::optional<ScheduledRoomAction> pendingAction;
+  std::optional<ScheduledRoomAction> recentAction;
   std::vector<RoomMember> members;
 };
 
@@ -48,6 +59,9 @@ public:
   void leave(const std::string &deviceId, std::uint64_t membershipToken);
   [[nodiscard]] bool updateMember(const RoomMember &member);
   void setPlaybackState(RoomPlaybackState state);
+  void setStreamId(std::uint32_t streamId);
+  [[nodiscard]] bool scheduleAction(ScheduledRoomAction action);
+  [[nodiscard]] std::optional<ScheduledRoomAction> takeAction();
   [[nodiscard]] RoomSnapshot snapshot() const;
 
 private:

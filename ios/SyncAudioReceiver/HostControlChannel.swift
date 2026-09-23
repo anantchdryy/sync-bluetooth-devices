@@ -31,6 +31,13 @@ struct HostWelcome {
     }
 }
 
+struct ScheduledHostAction: Equatable {
+    let name: String
+    let effectiveHostNanoseconds: UInt64
+    let seekFrame: UInt64
+    let nextStreamID: UInt32
+}
+
 /// A reliable, bounded, line-oriented session channel. PCM stays on UDP.
 final class HostControlChannel {
     var onWelcome: ((HostWelcome) -> Void)?
@@ -39,6 +46,7 @@ final class HostControlChannel {
     var onRoom: ((String, String) -> Void)?
     var onSyncAt: ((UInt64) -> Void)?
     var onHostPlayback: ((String, UInt64) -> Void)?
+    var onScheduledAction: ((ScheduledHostAction) -> Void)?
 
     private let queue = DispatchQueue(label: "TandemAudio.control")
     private var connection: NWConnection?
@@ -160,13 +168,23 @@ final class HostControlChannel {
             onWelcome?(welcome)
         } else if line.hasPrefix("HOST_STATE ") {
             let fields = line.split(separator: " ")
-            if fields.count == 4, let session = UInt64(fields[2]),
+            if fields.count >= 4, let session = UInt64(fields[2]),
                session != joinedSessionID {
                 scheduleRetry(reason: "Host session changed")
             } else {
                 onState?(line)
-                if fields.count == 4, let frame = UInt64(fields[3]) {
+                if fields.count >= 4, let frame = UInt64(fields[3]) {
                     onHostPlayback?(String(fields[1]), frame)
+                }
+                if let index = fields.firstIndex(where: { $0 == "PENDING" || $0 == "ACTION" }),
+                   fields.count >= index + 5,
+                   let timestamp = UInt64(fields[index + 2]),
+                   let frame = UInt64(fields[index + 3]),
+                   let streamID = UInt32(fields[index + 4]) {
+                    onScheduledAction?(ScheduledHostAction(
+                        name: String(fields[index + 1]),
+                        effectiveHostNanoseconds: timestamp,
+                        seekFrame: frame, nextStreamID: streamID))
                 }
             }
         } else if line.hasPrefix("ROOM ") {

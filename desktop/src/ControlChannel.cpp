@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdint>
+#include <charconv>
 #include <memory>
 #include <cmath>
 #include <sstream>
@@ -71,6 +72,41 @@ bool validDeviceId(const std::string &id) {
   return true;
 }
 
+const char *actionName(RoomAction action) {
+  switch (action) {
+  case RoomAction::Play: return "PLAY";
+  case RoomAction::Pause: return "PAUSE";
+  case RoomAction::Seek: return "SEEK";
+  case RoomAction::Stop: return "STOP";
+  }
+  return "UNKNOWN";
+}
+
+std::string hostStateLine(ControlStreamState &state) {
+  std::string result = std::string("HOST_STATE ") +
+      (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
+      std::to_string(state.sessionId) + " " +
+      std::to_string(state.currentFrame.load(std::memory_order_acquire));
+  if (state.room) {
+    const auto snapshot = state.room->snapshot();
+    result += " STREAM " + std::to_string(snapshot.streamId);
+    if (snapshot.pendingAction) {
+      const auto &pending = *snapshot.pendingAction;
+      result += " PENDING " + std::string(actionName(pending.action)) + " " +
+          std::to_string(pending.effectiveHostNanoseconds) + " " +
+          std::to_string(pending.seekFrame) + " " +
+          std::to_string(pending.nextStreamId);
+    } else if (snapshot.recentAction) {
+      const auto &recent = *snapshot.recentAction;
+      result += " ACTION " + std::string(actionName(recent.action)) + " " +
+          std::to_string(recent.effectiveHostNanoseconds) + " " +
+          std::to_string(recent.seekFrame) + " " +
+          std::to_string(recent.nextStreamId);
+    }
+  }
+  return result + "\n";
+}
+
 std::string responseFor(const std::string &line, ControlStreamState &state,
                         const std::string &peerAddress,
                         std::string &joinedDeviceId,
@@ -86,7 +122,7 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
       joinedDeviceId = deviceId;
     }
     std::string response = "WELCOME " + std::to_string(state.sessionId) + " " +
-           std::to_string(state.streamId) + " " +
+           std::to_string(state.streamId.load(std::memory_order_acquire)) + " " +
            std::to_string(state.audioPort) + " " +
            std::to_string(state.clockPort) + " " +
            std::to_string(state.sampleRate) + " " +
@@ -98,18 +134,12 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
           std::chrono::milliseconds(500)).count();
       response += "ROOM " + room.roomId + " " + room.roomName + "\n";
       response += "SYNC_AT " + std::to_string(syncAt) + "\n";
-      response += std::string("HOST_STATE ") +
-          (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
-          std::to_string(state.sessionId) + " " +
-          std::to_string(state.currentFrame.load(std::memory_order_acquire)) + "\n";
+      response += hostStateLine(state);
     }
     return response;
   }
   if (line == "HOST_STATE") {
-    return std::string("HOST_STATE ") +
-           (state.playing.load(std::memory_order_acquire) ? "PLAYING " : "STOPPED ") +
-           std::to_string(state.sessionId) + " " +
-           std::to_string(state.currentFrame.load(std::memory_order_acquire)) + "\n";
+    return hostStateLine(state);
   }
   if (line.rfind("CLIENT_STATE ", 0) == 0) {
     if (!state.room) return "OK\n";
@@ -145,8 +175,39 @@ std::string responseFor(const std::string &line, ControlStreamState &state,
     return state.room->updateMember(updated) ? "OK\n" : "ERROR not-joined\n";
   }
   if (line == "LEAVE") return "BYE\n";
-  if (line == "PLAY" || line == "PAUSE" || line.rfind("SEEK ", 0) == 0)
-    return "ERROR unsupported-command\n";
+  if (line == "PLAY" || line == "PAUSE" || line == "STOP" ||
+      line.rfind("SEEK ", 0) == 0) {
+    if (!state.room) return "ERROR unsupported-command\n";
+    if (peerAddress != "127.0.0.1") return "ERROR host-only-command\n";
+    const auto snapshot = state.room->snapshot();
+    RoomAction action = RoomAction::Play;
+    std::uint64_t seekFrame = 0;
+    if (line == "PAUSE") action = RoomAction::Pause;
+    else if (line == "STOP") action = RoomAction::Stop;
+    else if (line.rfind("SEEK ", 0) == 0) {
+      action = RoomAction::Seek;
+      const auto value = line.substr(5);
+      const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), seekFrame);
+      if (error != std::errc{} || end != value.data() + value.size())
+        return "ERROR invalid-seek\n";
+      if (state.totalFrames != 0 && seekFrame >= state.totalFrames)
+        return "ERROR seek-out-of-range\n";
+    }
+    const auto playing = snapshot.playbackState == RoomPlaybackState::Playing;
+    if ((action == RoomAction::Play && playing) ||
+        (action == RoomAction::Pause && !playing) ||
+        (action == RoomAction::Seek && snapshot.playbackState == RoomPlaybackState::Stopped))
+      return "ERROR invalid-state\n";
+    auto nextStream = snapshot.streamId;
+    if (action == RoomAction::Seek && ++nextStream == 0) nextStream = 1;
+    const auto effective = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch() +
+        std::chrono::seconds(2)).count();
+    if (!state.room->scheduleAction({action, effective, seekFrame, nextStream}))
+      return "ERROR command-pending\n";
+    return "SCHEDULED " + std::string(actionName(action)) + " " +
+        std::to_string(effective) + " " + std::to_string(seekFrame) + "\n";
+  }
   return "ERROR unknown-command\n";
 }
 } // namespace

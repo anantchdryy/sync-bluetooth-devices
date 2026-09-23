@@ -68,6 +68,12 @@ public:
     return framesRead;
   }
 
+  void seek(std::uint64_t frame) {
+    const auto result = ma_decoder_seek_to_pcm_frame(&decoder_, frame);
+    if (result != MA_SUCCESS)
+      throw std::runtime_error("Unable to seek network audio source");
+  }
+
 private:
   ma_decoder decoder_{};
   bool initialized_{false};
@@ -105,6 +111,7 @@ DesktopNetworkHost::DesktopNetworkHost(DesktopNetworkHostConfig config)
   if (config_.sendAhead < std::chrono::milliseconds::zero()) {
     throw std::invalid_argument("Send-ahead duration must not be negative");
   }
+
   if (config_.hostOutputLatency < std::chrono::milliseconds{-1'000} ||
       config_.hostOutputLatency > std::chrono::milliseconds{1'000})
     throw std::invalid_argument("Host output latency calibration is invalid");
@@ -114,8 +121,10 @@ DesktopNetworkHostStats
 DesktopNetworkHost::streamFile(const std::filesystem::path &path,
                                PlaybackClock::Timestamp playbackStartTime,
                                std::uint32_t expectedSampleRate,
-                               std::uint16_t expectedChannelCount) {
+                               std::uint16_t expectedChannelCount,
+                               std::uint64_t initialFrame) {
   Decoder decoder(path);
+  if (initialFrame != 0) decoder.seek(initialFrame);
   const auto sampleRate = decoder.sampleRate();
   const auto channelCount = decoder.channels();
   if (sampleRate != expectedSampleRate ||
@@ -181,7 +190,7 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
   // the host's local output path. The host never delays its audio callback.
   PlaybackClock clock(sampleRate, playbackStartTime + config_.hostOutputLatency);
   std::vector<std::int16_t> samples(framesPerPacket * channelCount);
-  std::uint64_t startFrame = 0;
+  std::uint64_t startFrame = initialFrame;
   std::uint32_t sequenceNumber = 0;
   auto firstSend = std::chrono::steady_clock::time_point{};
   auto lastSend = firstSend;
@@ -189,12 +198,32 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
   while (true) {
     if (config_.outputRouteChanged && config_.outputRouteChanged())
       throw std::runtime_error("Host output route changed; restart with a calibration for the new route");
-    const auto framesRead = decoder.read(samples, framesPerPacket);
+    const auto presentationTimestamp = clock.frameToTimestamp(startFrame - initialFrame);
+    auto requestedFrames = framesPerPacket;
+    if (config_.room) {
+      const auto pending = config_.room->snapshot().pendingAction;
+      if (pending) {
+        const auto cutoff = PlaybackClock::Timestamp{
+            PlaybackClock::Duration{pending->effectiveHostNanoseconds}} -
+            (pending->action == RoomAction::Seek ? config_.sendAhead
+                                                 : std::chrono::milliseconds{0});
+        if (presentationTimestamp >= cutoff) {
+          stats.endedForCommand = true;
+          break;
+        }
+        const auto framesUntilCutoff = std::chrono::duration<double>(
+            cutoff - presentationTimestamp).count() * sampleRate;
+        if (framesUntilCutoff < static_cast<double>(requestedFrames)) {
+          requestedFrames = std::max<std::uint64_t>(
+              1, static_cast<std::uint64_t>(framesUntilCutoff));
+        }
+      }
+    }
+    const auto framesRead = decoder.read(samples, requestedFrames);
     if (framesRead == 0) {
+      stats.sourceExhausted = true;
       break;
     }
-
-    const auto presentationTimestamp = clock.frameToTimestamp(startFrame);
     const auto sendTime = presentationTimestamp - config_.sendAhead;
     if (const auto currentTime = PlaybackClock::now(); sendTime > currentTime) {
       std::this_thread::sleep_until(sendTime);
@@ -237,6 +266,7 @@ DesktopNetworkHost::streamFile(const std::filesystem::path &path,
       config_.progressFrame->store(startFrame, std::memory_order_release);
     }
   }
+  stats.lastFrame = startFrame;
 
 #ifndef NDEBUG
   if (impairment) {

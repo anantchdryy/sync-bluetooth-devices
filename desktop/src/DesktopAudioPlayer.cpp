@@ -77,6 +77,7 @@ public:
 
     metadata_.sampleRate = decoder_.outputSampleRate;
     metadata_.channels = decoder_.outputChannels;
+    metadata_.totalFrames = frameCount;
     metadata_.durationSeconds =
         metadata_.sampleRate == 0
             ? 0.0
@@ -86,19 +87,22 @@ public:
 
   void play() { playAt(PlaybackClock::now()); }
 
-  void playAt(PlaybackClock::Timestamp startTime) {
+  void playAt(PlaybackClock::Timestamp startTime) { playFrom(0, startTime); }
+
+  void playFrom(PlaybackClock::Frame frame,
+                PlaybackClock::Timestamp startTime) {
     if (!decoderInitialized_) {
       throw std::logic_error("No audio file has been loaded");
     }
 
     stop();
     playbackClock_.reset();
-    submittedFrames_.store(0, std::memory_order_release);
-    stoppedFrame_.store(0, std::memory_order_release);
+    submittedFrames_.store(frame, std::memory_order_release);
+    stoppedFrame_.store(frame, std::memory_order_release);
     stoppedElapsedNanoseconds_.store(0, std::memory_order_release);
-    const auto seekResult = ma_decoder_seek_to_pcm_frame(&decoder_, 0);
+    const auto seekResult = ma_decoder_seek_to_pcm_frame(&decoder_, frame);
     if (seekResult != MA_SUCCESS) {
-      throw miniaudioError("Unable to rewind audio file", seekResult);
+      throw miniaudioError("Unable to seek audio file", seekResult);
     }
 
     bytesPerFrame_ = ma_get_bytes_per_frame(decoder_.outputFormat,
@@ -133,10 +137,15 @@ public:
     }
     deviceInitialized_ = true;
     endReached_.store(false, std::memory_order_release);
-    submittedFrames_.store(0, std::memory_order_release);
-    stoppedFrame_.store(0, std::memory_order_release);
+    submittedFrames_.store(frame, std::memory_order_release);
+    stoppedFrame_.store(frame, std::memory_order_release);
     stoppedElapsedNanoseconds_.store(0, std::memory_order_release);
-    playbackClock_.emplace(metadata_.sampleRate, startTime);
+    const PlaybackClock zeroClock(metadata_.sampleRate,
+                                  PlaybackClock::Timestamp{});
+    const auto frameOffset = zeroClock.frameToTimestamp(frame).time_since_epoch();
+    segmentStartTime_ = startTime;
+    segmentStartFrame_ = frame;
+    playbackClock_.emplace(metadata_.sampleRate, startTime - frameOffset);
     timelineRunning_.store(true, std::memory_order_release);
     playing_.store(true, std::memory_order_release);
     outputRouteChanged_.store(false, std::memory_order_release);
@@ -183,6 +192,7 @@ public:
     if (!playbackClock_) {
       return 0;
     }
+    if (PlaybackClock::now() < segmentStartTime_) return segmentStartFrame_;
     if (!timelineRunning_.load(std::memory_order_acquire)) {
       return stoppedFrame_.load(std::memory_order_acquire);
     }
@@ -299,7 +309,7 @@ private:
                 static_cast<std::size_t>(frameCount) * bytesPerFrame);
 
     if (self->playbackClock_ &&
-        PlaybackClock::now() < self->playbackClock_->startTime()) {
+        PlaybackClock::now() < self->segmentStartTime_) {
       return;
     }
 
@@ -352,6 +362,8 @@ private:
   std::atomic<PlaybackClock::Frame> stoppedFrame_{0};
   std::atomic<PlaybackClock::Duration::rep> stoppedElapsedNanoseconds_{0};
   std::optional<PlaybackClock> playbackClock_;
+  PlaybackClock::Timestamp segmentStartTime_{};
+  PlaybackClock::Frame segmentStartFrame_{};
   AudioMetadata metadata_{};
 };
 
@@ -366,6 +378,11 @@ void DesktopAudioPlayer::play() { impl_->play(); }
 
 void DesktopAudioPlayer::playAt(PlaybackClock::Timestamp startTime) {
   impl_->playAt(startTime);
+}
+
+void DesktopAudioPlayer::playFrom(PlaybackClock::Frame frame,
+                                  PlaybackClock::Timestamp startTime) {
+  impl_->playFrom(frame, startTime);
 }
 
 void DesktopAudioPlayer::stop() noexcept { impl_->stop(); }

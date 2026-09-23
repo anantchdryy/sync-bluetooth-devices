@@ -80,6 +80,29 @@ void Room::setPlaybackState(RoomPlaybackState state) {
   state_.playbackState = state;
 }
 
+void Room::setStreamId(std::uint32_t streamId) {
+  if (streamId == 0) throw std::invalid_argument("Stream ID must be nonzero");
+  std::scoped_lock lock(mutex_);
+  state_.streamId = streamId;
+}
+
+bool Room::scheduleAction(ScheduledRoomAction action) {
+  if (action.effectiveHostNanoseconds <= 0 || action.nextStreamId == 0)
+    throw std::invalid_argument("Scheduled room action is invalid");
+  std::scoped_lock lock(mutex_);
+  if (state_.pendingAction) return false;
+  state_.pendingAction = action;
+  return true;
+}
+
+std::optional<ScheduledRoomAction> Room::takeAction() {
+  std::scoped_lock lock(mutex_);
+  auto result = state_.pendingAction;
+  if (result) state_.recentAction = result;
+  state_.pendingAction.reset();
+  return result;
+}
+
 RoomSnapshot Room::snapshot() const {
   std::scoped_lock lock(mutex_);
   auto result = state_;

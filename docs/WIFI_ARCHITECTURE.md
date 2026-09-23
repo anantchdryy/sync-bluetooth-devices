@@ -32,10 +32,10 @@ sends `JOIN <device-id>`; the server responds with
 `WELCOME <session-id> <stream-id> <audio-port> <clock-port> <sample-rate>
 <channels> <host-ipv4>`. `HOST_STATE` returns the current playing state,
 session ID, and most recently transmitted frame. `CLIENT_STATE` is acknowledged
-and `LEAVE` closes the session. `PLAY`, `PAUSE`, and `SEEK` currently return an
-explicit unsupported-command response. The channel is not an audio fallback.
-The current host sends to a configured IPv4 destination or LAN broadcast; a
-JOIN does not yet create a per-client unicast stream.
+and `LEAVE` closes the session. The host sends UDP audio separately to each
+joined member. Local host controls are scheduled for a future timestamp;
+remote peers cannot issue them. See [rooms](ROOMS.md) for command behavior,
+membership, and scale tests.
 
 ## Audio packet
 
@@ -70,8 +70,8 @@ measure physical speaker latency.
 
 ## Reconnection and performance limits
 
-The Phase 10 control socket reports disconnects but does not yet automatically
-rejoin a changed host session. Phase 11 defines the reconnection state machine.
+The control client enters `RECONNECTING` after a disconnect and retries with
+bounded backoff. A changed host session starts a fresh playback queue.
 Host IP changes require rediscovery. Audio callbacks do not perform socket or
 file I/O. The desktop jitter-buffer read uses a nonblocking mutex attempt and
 outputs silence if the receiver briefly owns the buffer; expired packets are

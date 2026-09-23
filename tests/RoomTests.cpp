@@ -37,6 +37,16 @@ int main() {
     room.setPlaybackState(RoomPlaybackState::Playing);
     require(room.snapshot().playbackState == RoomPlaybackState::Playing,
             "Room playback state was not stored");
+    require(room.scheduleAction({RoomAction::Pause, 123'000, 0,
+                                 identity.streamId}),
+            "Future room command was not scheduled");
+    require(!room.scheduleAction({RoomAction::Stop, 124'000, 0,
+                                  identity.streamId}),
+            "Second room command replaced a pending command");
+    const auto command = room.takeAction();
+    require(command && command->action == RoomAction::Pause &&
+                command->effectiveHostNanoseconds == 123'000,
+            "Scheduled room command was corrupted");
     std::cout << "Room joins, independent status, and leave tests passed\n";
     return 0;
   } catch (const std::exception &error) {

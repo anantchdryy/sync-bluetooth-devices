@@ -41,6 +41,9 @@ struct DesktopNetworkHostStats {
   double sendDurationSeconds{};
   std::uint16_t framesPerPacket{};
   double packetDurationMilliseconds{};
+  std::uint64_t lastFrame{};
+  bool endedForCommand{};
+  bool sourceExhausted{};
 };
 
 class DesktopNetworkHost {
@@ -51,7 +54,8 @@ public:
   streamFile(const std::filesystem::path &path,
              PlaybackClock::Timestamp playbackStartTime,
              std::uint32_t expectedSampleRate,
-             std::uint16_t expectedChannelCount);
+             std::uint16_t expectedChannelCount,
+             std::uint64_t initialFrame = 0);
 
   [[nodiscard]] const DesktopNetworkHostConfig &config() const noexcept;
 

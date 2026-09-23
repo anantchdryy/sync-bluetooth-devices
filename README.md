@@ -9,6 +9,8 @@ audio are not implemented. Physical iPhone playback and acoustic alignment
 still require device testing; simulator tests alone cannot verify them.
 
 For iPhone setup and measurement guidance, see [ios/README.md](ios/README.md).
+For room creation, multiple clients, and scheduled controls, see
+[docs/ROOMS.md](docs/ROOMS.md).
 
 ## Requirements
 
