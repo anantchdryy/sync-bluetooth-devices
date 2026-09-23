@@ -133,6 +133,37 @@ final class AudioPacketTests: XCTestCase {
         XCTAssertGreaterThan(accumulator.snapshot.targetBufferMilliseconds, 180)
     }
 
+    func testOutputLatencyModelKeepsRouteAndNetworkTimingSeparate() {
+        let builtIn = OutputLatencyModel(outputRouteId: "speaker-a",
+                                         outputRouteType: "Built-in speaker",
+                                         systemEstimateMs: 35,
+                                         manualAdjustmentMs: 10,
+                                         calibrationConfidence: "Manual adjustment")
+        let bluetooth = OutputLatencyModel(outputRouteId: "headset-b",
+                                           outputRouteType: "Bluetooth",
+                                           systemEstimateMs: 180,
+                                           manualAdjustmentMs: -20,
+                                           calibrationConfidence: "Manual adjustment")
+        XCTAssertEqual(builtIn.effectiveLatencyMs, 45)
+        XCTAssertEqual(bluetooth.effectiveLatencyMs, 160)
+        XCTAssertNotEqual(builtIn.outputRouteId, bluetooth.outputRouteId)
+        let packet = AudioPacket(datagram: makeDatagram(sequence: 0,
+                                                        presentationTime: 2_000_000_000))!
+        let estimate = ClockEstimate(offsetNanoseconds: 20_000_000,
+                                     roundTripNanoseconds: 4_000_000,
+                                     measuredAtNanoseconds: 1_000_000_000,
+                                     sampleCount: 8)
+        let speakerDelay = PlaybackTiming.startDelayNanoseconds(
+            packet: packet, estimate: estimate,
+            outputLatencyNanoseconds: builtIn.effectiveLatencyNs,
+            nowNanoseconds: 1_000_000_000)
+        let bluetoothDelay = PlaybackTiming.startDelayNanoseconds(
+            packet: packet, estimate: estimate,
+            outputLatencyNanoseconds: bluetooth.effectiveLatencyNs,
+            nowNanoseconds: 1_000_000_000)
+        XCTAssertEqual(speakerDelay - bluetoothDelay, 115_000_000, accuracy: 1)
+    }
+
     private func makeDatagram(sequence: UInt32, startFrame: UInt64 = 0,
                               presentationTime: UInt64 = 0) -> Data {
         var bytes = [UInt8](repeating: 0, count: 56)

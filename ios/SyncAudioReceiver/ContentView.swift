@@ -78,6 +78,24 @@ struct ContentView: View {
                     LabeledContent("Device sample rate", value: model.playback.hardwareSampleRate.map {
                         String(format: "%.0f Hz", $0)
                     } ?? "—")
+                    LabeledContent("Output route", value: model.playback.outputRouteType)
+                    LabeledContent("Calibration", value: model.playback.calibrationConfidence)
+                    LabeledContent("Effective output delay", value:
+                        model.playback.effectiveOutputLatencyMilliseconds.map {
+                            String(format: "%+.1f ms", $0)
+                        } ?? "—")
+                }
+
+                Section("Manual output calibration") {
+                    Slider(value: $model.calibrationAdjustmentMs,
+                           in: -1_000...1_000, step: 1) { editing in
+                        if !editing { model.applyCalibration() }
+                    }
+                    LabeledContent("Adjustment", value:
+                        String(format: "%+.0f ms", model.calibrationAdjustmentMs))
+                    Text("Use the same short click on both devices and adjust until they sound aligned. This value is saved for the current output route.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Synchronization") {

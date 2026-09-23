@@ -8,6 +8,11 @@ struct PlaybackSnapshot {
     var underruns = 0
     var concealedFrames = 0
     var outputLatencyMilliseconds: Double?
+    var effectiveOutputLatencyMilliseconds: Double?
+    var outputRouteId = "unavailable"
+    var outputRouteType = "Unknown"
+    var calibrationConfidence = "Unavailable"
+    var manualCalibrationMilliseconds = 0.0
     var hardwareSampleRate: Double?
     var estimatedSyncErrorMilliseconds: Double?
     var presentationDelayMilliseconds = 20.0
@@ -27,6 +32,8 @@ final class AudioPlaybackController {
     private var format: AVAudioFormat?
     private var timer: DispatchSourceTimer?
     private var interruptionObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
+    private var outputLatency: OutputLatencyModel?
     private var snapshot = PlaybackSnapshot()
     private var queuedFrames = 0
     private var generation = 0
@@ -47,6 +54,7 @@ final class AudioPlaybackController {
             self.active = true
             self.snapshot = PlaybackSnapshot(state: "Waiting for PCM")
             self.observeInterruptions()
+            self.observeRouteChanges()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
             timer.schedule(deadline: .now() + .milliseconds(10), repeating: .milliseconds(10))
             timer.setEventHandler { [weak self] in self?.pump() }
@@ -100,6 +108,26 @@ final class AudioPlaybackController {
         }
     }
 
+    func setManualCalibration(milliseconds: Double) {
+        queue.async { [weak self] in
+            guard let self, let current = self.outputLatency else { return }
+            let adjusted = min(1_000, max(-1_000, milliseconds))
+            if !current.outputRouteId.isEmpty {
+                UserDefaults.standard.set(adjusted,
+                    forKey: "TandemAudio.calibration.\(current.outputRouteId)")
+            }
+            self.outputLatency = OutputLatencyModel(
+                outputRouteId: current.outputRouteId,
+                outputRouteType: current.outputRouteType,
+                systemEstimateMs: current.systemEstimateMs,
+                manualAdjustmentMs: adjusted,
+                calibrationConfidence: adjusted == 0 ? "System estimate" : "Manual adjustment")
+            self.updateLatencySnapshot()
+            self.resetStream()
+            self.publish()
+        }
+    }
+
     private func configure(format packet: AudioPacket) -> Bool {
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Double(packet.sampleRate),
@@ -116,6 +144,7 @@ final class AudioPlaybackController {
             snapshot.outputLatencyMilliseconds =
                 (session.outputLatency + session.ioBufferDuration) * 1_000
             snapshot.hardwareSampleRate = session.sampleRate
+            refreshOutputRoute(session: session)
             return true
         } catch {
             snapshot.state = "Audio setup failed: \(error.localizedDescription)"
@@ -145,7 +174,7 @@ final class AudioPlaybackController {
         if !primed && queuedFrames == 0 {
             let minimumTimestamp = PlaybackTiming.minimumPacketTimestamp(
                 estimate: clockEstimate,
-                outputLatencyNanoseconds: (snapshot.outputLatencyMilliseconds ?? 0) * 1_000_000,
+                outputLatencyNanoseconds: outputLatency?.effectiveLatencyNs ?? 0,
                 nowNanoseconds: DispatchTime.now().uptimeNanoseconds)
             packets.discard(beforeHostNanoseconds: minimumTimestamp)
         }
@@ -176,7 +205,7 @@ final class AudioPlaybackController {
             guard let firstPacket else { return }
             let delay = PlaybackTiming.startDelayNanoseconds(
                 packet: firstPacket, estimate: clockEstimate,
-                outputLatencyNanoseconds: (snapshot.outputLatencyMilliseconds ?? 0) * 1_000_000,
+                outputLatencyNanoseconds: outputLatency?.effectiveLatencyNs ?? 0,
                 nowNanoseconds: DispatchTime.now().uptimeNanoseconds)
             guard delay > 0 else {
                 resetStream()
@@ -255,6 +284,64 @@ final class AudioPlaybackController {
         }
     }
 
+    private func observeRouteChanges() {
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(), queue: nil
+        ) { [weak self] _ in
+            self?.queue.async { [weak self] in
+                guard let self, self.active else { return }
+                let session = AVAudioSession.sharedInstance()
+                let previous = self.outputLatency?.outputRouteId
+                self.refreshOutputRoute(session: session)
+                if self.outputLatency?.outputRouteId != previous {
+                    self.generation += 1
+                    self.player.stop()
+                    self.engine.stop()
+                    self.format = nil
+                    self.resetStream()
+                    self.snapshot.state = "Output changed; buffering"
+                    self.publish()
+                }
+            }
+        }
+    }
+
+    private func refreshOutputRoute(session: AVAudioSession) {
+        guard let port = session.currentRoute.outputs.first else {
+            outputLatency = nil
+            snapshot.outputRouteId = "unavailable"
+            snapshot.outputRouteType = "Unknown"
+            snapshot.calibrationConfidence = "Unavailable"
+            snapshot.effectiveOutputLatencyMilliseconds = nil
+            return
+        }
+        let rawType = port.portType.rawValue.lowercased()
+        let routeType: String
+        if rawType.contains("bluetooth") { routeType = "Bluetooth" }
+        else if rawType.contains("usb") { routeType = "USB audio" }
+        else if rawType.contains("head") || rawType.contains("line") { routeType = "Wired audio" }
+        else if rawType.contains("speaker") { routeType = "Built-in speaker" }
+        else { routeType = port.portType.rawValue }
+        let manual = UserDefaults.standard.double(forKey: "TandemAudio.calibration.\(port.uid)")
+        outputLatency = OutputLatencyModel(
+            outputRouteId: port.uid, outputRouteType: routeType,
+            systemEstimateMs: (session.outputLatency + session.ioBufferDuration) * 1_000,
+            manualAdjustmentMs: manual,
+            calibrationConfidence: manual == 0 ? "System estimate" : "Manual adjustment")
+        updateLatencySnapshot()
+    }
+
+    private func updateLatencySnapshot() {
+        guard let outputLatency else { return }
+        snapshot.outputLatencyMilliseconds = outputLatency.systemEstimateMs
+        snapshot.effectiveOutputLatencyMilliseconds = outputLatency.effectiveLatencyMs
+        snapshot.outputRouteId = outputLatency.outputRouteId
+        snapshot.outputRouteType = outputLatency.outputRouteType
+        snapshot.manualCalibrationMilliseconds = outputLatency.manualAdjustmentMs
+        snapshot.calibrationConfidence = outputLatency.calibrationConfidence
+    }
+
     private func resetStream() {
         generation += 1
         player.stop()
@@ -274,6 +361,8 @@ final class AudioPlaybackController {
         timer = nil
         if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
         interruptionObserver = nil
+        if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
+        routeObserver = nil
         player.stop()
         engine.stop()
         packets = PacketPlaybackQueue()
@@ -283,6 +372,7 @@ final class AudioPlaybackController {
         queuedFrames = 0
         primed = false
         format = nil
+        outputLatency = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

@@ -29,6 +29,7 @@ final class ReceiverViewModel: ObservableObject {
     @Published private(set) var isListening = false
     @Published private(set) var connectionState: ReceiverConnectionState = .discovering
     @Published private(set) var diagnosticsURL: URL?
+    @Published var calibrationAdjustmentMs = 0.0
 
     private let receiver = UDPStreamReceiver()
     private let audio = AudioPlaybackController()
@@ -53,6 +54,9 @@ final class ReceiverViewModel: ObservableObject {
         audio.onSnapshot = { [weak self] playback in
             DispatchQueue.main.async { [weak self] in
                 self?.playback = playback
+                if self?.calibrationAdjustmentMs != playback.manualCalibrationMilliseconds {
+                    self?.calibrationAdjustmentMs = playback.manualCalibrationMilliseconds
+                }
                 if playback.state == "Playing" { self?.connectionState = .playing }
                 else if playback.state == "Buffering" { self?.connectionState = .buffering }
             }
@@ -179,6 +183,11 @@ final class ReceiverViewModel: ObservableObject {
             "latePackets": playback.latePackets,
             "underruns": playback.underruns,
             "estimatedOutputLatencyMs": playback.outputLatencyMilliseconds as Any? ?? NSNull(),
+            "effectiveOutputLatencyMs": playback.effectiveOutputLatencyMilliseconds as Any? ?? NSNull(),
+            "outputRouteId": playback.outputRouteId,
+            "outputRouteType": playback.outputRouteType,
+            "calibrationConfidence": playback.calibrationConfidence,
+            "manualCalibrationMs": playback.manualCalibrationMilliseconds,
             "estimatedSyncErrorMs": playback.estimatedSyncErrorMilliseconds as Any? ?? NSNull(),
             "exportedAt": ISO8601DateFormatter().string(from: Date())
         ]
@@ -192,5 +201,9 @@ final class ReceiverViewModel: ObservableObject {
         } catch {
             snapshot.status = "Could not export diagnostics: \(error.localizedDescription)"
         }
+    }
+
+    func applyCalibration() {
+        audio.setManualCalibration(milliseconds: calibrationAdjustmentMs)
     }
 }

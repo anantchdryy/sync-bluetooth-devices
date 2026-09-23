@@ -20,3 +20,17 @@ enum PlaybackTiming {
             - safetyDelayNanoseconds
     }
 }
+
+struct OutputLatencyModel {
+    let outputRouteId: String
+    let outputRouteType: String
+    let systemEstimateMs: Double
+    let manualAdjustmentMs: Double
+    let calibrationConfidence: String
+
+    var effectiveLatencyMs: Double {
+        systemEstimateMs + min(1_000, max(-1_000, manualAdjustmentMs))
+    }
+
+    var effectiveLatencyNs: Double { effectiveLatencyMs * 1_000_000 }
+}
