@@ -19,7 +19,7 @@ have separate sockets and threads. On iOS, `HostDiscovery`,
 Network.framework objects. The audio player performs no network I/O.
 
 The host advertises `_tandemaudio._tcp.local.` with the TCP control port. The
-iPhone shows discovered hosts in its development UI. Selecting one connects
+iPhone shows nearby rooms on Home. Selecting one connects
 over TCP, receives its session metadata and IPv4 address, then starts UDP audio
 and clock probes. Manual IPv4 and port entry remains available. Discovery is
 local-subnet only and may be blocked by client isolation, VPNs, or firewalls.

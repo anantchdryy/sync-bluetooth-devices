@@ -19,8 +19,8 @@ section is inferred from a simulator or from host-side loopback traffic.
 | Room model and control protocol | local Windows Debug/Release | PASS | `room_tests`, `control_channel_tests` |
 | 1/2/5/10 room clients | local Windows loopback, 8 kHz mono | PASS, 25 received packets per client | `room_transport_tests`; see [rooms](ROOMS.md) |
 | Pause, resume, seek, stop | local Windows Debug, 40-second silent WAV | PASS, four scheduled commands and clean stop | CLI host/control run; iPhone acoustic response unmeasured |
-| iPhone simulator compile/unit tests | macOS GitHub Actions, Phase 14 commit `a82e611` | PASS | Actions workflow |
-| Windows Release C++ tests | GitHub Actions, Phase 14 commit `a82e611` | PASS, 14 CTest targets | Actions workflow |
+| iPhone Debug/Release simulator build and unit tests | macOS GitHub Actions, Phase 14 commit `2abb362` | PASS | Actions workflow |
+| Windows Release C++ and WPF build | GitHub Actions, Phase 14 commit `2abb362` | PASS, 14 CTest targets and GUI build | Actions workflow |
 | Desktop DNS-SD discovery | local Windows Wi-Fi interface with virtual adapters | PASS, found `Smoke Room` at `172.31.153.232:40102` | 20-second host and C# browser smoke; not a second device |
 
 These tests verify deterministic packet handling and bounds. They do not
@@ -52,9 +52,9 @@ the test is active and make a recording that includes both speakers.
 | Windows → iPhone | built-in / same Wi-Fi | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | user will test at end |
 | Windows → iPhone | wired output | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | user will test at end |
 | Windows → iPhone | Bluetooth output | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | user will test at end |
-| Windows → Android | any | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | Android client not implemented |
+| Windows → Android | any | NOT SUPPORTED | unavailable | unavailable | Android client not implemented |
 | Mac → iPhone | any | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | Mac host not validated |
-| Mac → Android | any | NOT TESTED — HARDWARE REQUIRED | unavailable | unavailable | neither target validated |
+| Mac → Android | any | NOT SUPPORTED | unavailable | unavailable | Android client not implemented |
 
 For each available pair, record an exported diagnostics JSON, a shared
 transient-sound recording, output routes, Wi-Fi layout, and the time from

@@ -18,7 +18,7 @@ No physical iPhone playback or acoustic synchronization measurement has been per
 
 The local Release suite passed 14/14 CTests, including packet parsing, clock synchronization, drift correction, jitter buffering, output latency math, network impairment, reliability stress, room state/control, and 1/2/5/10-client loopback delivery. The seeded impairment test covers 100 loss/jitter/delay combinations, blackouts up to 5 seconds, duplication, and reordering. The stress test covers clock rates from -500 to +500 ppm and 20,000 malformed datagrams. At 8 kHz mono, the 10-client short loopback run delivered 250 datagrams / 53,000 payload bytes and reported 0.241 CPU seconds and 7.09 MiB process working set on the development PC; this is a short local microbenchmark, not a Wi-Fi performance result. Details are in [test matrix](TEST_MATRIX.md) and [rooms](ROOMS.md).
 
-GitHub Windows and macOS/iPhone simulator workflows passed on the Phase 14 icon/asset commit `a82e611`. Simulator compile/tests do not exercise physical speaker timing, LAN discovery across devices, or background audio on a real iPhone.
+GitHub Windows and macOS/iPhone simulator workflows passed on Phase 14 commit `2abb362`; this includes the WPF Release build, iPhone Debug and Release simulator builds, and iPhone unit tests. Simulator compile/tests do not exercise physical speaker timing, LAN discovery across devices, or background audio on a real iPhone.
 
 ## Not yet tested
 
@@ -39,7 +39,7 @@ The code uses uncompressed PCM. For 48 kHz stereo signed 16-bit audio, raw paylo
 
 ## Audit and limits
 
-The Release build and tests pass, the GUI has zero .NET build warnings, and the Windows installer install/uninstall smoke passed. Protocol parsing checks sizes and identity, queues are bounded, Release rejects impairment flags, local playback commands are loopback-only, and the installer avoids broad firewall changes. The current room cap is 32 control clients, which is a safety bound rather than a supported synchronized-hardware count. There is no encryption/authentication on the LAN protocol. Windows GUI connection-quality labels are coarse estimates. No separate sanitizer or static-analysis run, independent clean-machine install, or prolonged hardware race/route audit has been completed. See [known limitations](KNOWN_LIMITATIONS.md).
+The Release build and tests pass, the GUI has zero .NET build warnings, MSVC `/analyze /EHsc` completed on the portable core without diagnostics, the published GUI launched locally, and the Windows installer install/uninstall smoke passed. Protocol parsing checks sizes and identity, queues are bounded, Release rejects impairment flags, local playback commands are loopback-only, and the installer avoids broad firewall changes. The current room cap is 32 control clients, which is a safety bound rather than a supported synchronized-hardware count. There is no encryption/authentication on the LAN protocol. Windows GUI connection-quality labels are coarse estimates. No sanitizer run, independent clean-machine install, or prolonged hardware race/route audit has been completed. See [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Next priorities
 
