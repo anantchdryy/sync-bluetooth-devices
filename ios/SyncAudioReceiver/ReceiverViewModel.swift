@@ -7,14 +7,24 @@ final class ReceiverViewModel: ObservableObject {
     @Published var hostIP = ""
     @Published var portText = "40100"
     @Published private(set) var snapshot = ReceiverSnapshot()
+    @Published private(set) var playback = PlaybackSnapshot()
     @Published private(set) var isListening = false
 
     private let receiver = UDPStreamReceiver()
+    private let audio = AudioPlaybackController()
 
     init() {
         receiver.onSnapshot = { [weak self] snapshot in
             DispatchQueue.main.async { [weak self] in
                 self?.snapshot = snapshot
+            }
+        }
+        receiver.onPacket = { [weak self] packet in
+            self?.audio.receive(packet)
+        }
+        audio.onSnapshot = { [weak self] playback in
+            DispatchQueue.main.async { [weak self] in
+                self?.playback = playback
             }
         }
     }
@@ -30,11 +40,13 @@ final class ReceiverViewModel: ObservableObject {
             return
         }
         isListening = true
+        audio.start()
         receiver.start(host: address, port: port)
     }
 
     func stop() {
         isListening = false
         receiver.stop()
+        audio.stop()
     }
 }

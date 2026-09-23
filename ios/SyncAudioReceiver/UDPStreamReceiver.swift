@@ -4,6 +4,7 @@ import Network
 /// Receives version-1 SAUD UDP datagrams from one configured IPv4 host.
 final class UDPStreamReceiver {
     var onSnapshot: ((ReceiverSnapshot) -> Void)?
+    var onPacket: ((AudioPacket) -> Void)?
 
     private let queue = DispatchQueue(label: "SyncAudioReceiver.udp")
     private var listener: NWListener?
@@ -111,7 +112,9 @@ final class UDPStreamReceiver {
                 return
             }
             if let data, let packet = AudioPacket(datagram: data) {
-                self.accumulator.record(packet, at: ProcessInfo.processInfo.systemUptime)
+                if self.accumulator.record(packet, at: ProcessInfo.processInfo.systemUptime) {
+                    self.onPacket?(packet)
+                }
                 if self.accumulator.snapshot.packetsReceived == 1 {
                     self.publish()
                 }

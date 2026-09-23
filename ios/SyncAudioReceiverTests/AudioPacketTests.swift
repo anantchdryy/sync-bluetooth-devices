@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import XCTest
 @testable import SyncAudioReceiver
 
@@ -31,7 +32,36 @@ final class AudioPacketTests: XCTestCase {
         XCTAssertGreaterThan(accumulator.snapshot.bufferDepthMilliseconds, 0)
     }
 
-    private func makeDatagram(sequence: UInt32) -> Data {
+    func testPlaybackQueueReordersAndConcealsGap() {
+        var queue = PacketPlaybackQueue()
+        queue.insert(AudioPacket(datagram: makeDatagram(sequence: 0, startFrame: 0))!)
+        queue.insert(AudioPacket(datagram: makeDatagram(sequence: 2, startFrame: 4))!)
+        queue.insert(AudioPacket(datagram: makeDatagram(sequence: 1, startFrame: 2))!)
+        XCTAssertEqual(queue.bufferedFrames, 6)
+        XCTAssertEqual(queue.popNext()?.frames, 2)
+        XCTAssertEqual(queue.popNext()?.frames, 2)
+        XCTAssertEqual(queue.popNext()?.frames, 2)
+        XCTAssertNil(queue.popNext())
+
+        queue.insert(AudioPacket(datagram: makeDatagram(sequence: 4, startFrame: 8))!)
+        if case .silence(let frames)? = queue.popNext() {
+            XCTAssertEqual(frames, 2)
+        } else {
+            XCTFail("Missing frames should be concealed")
+        }
+    }
+
+    func testPCMConversionPreservesSignedSampleValues() {
+        let packet = AudioPacket(datagram: makeDatagram(sequence: 0))!
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000,
+                                   channels: 1, interleaved: false)!
+        let buffer = PCMBufferConverter.convert(packet, format: format)!
+        XCTAssertEqual(buffer.frameLength, 2)
+        XCTAssertEqual(buffer.floatChannelData![0][0], 1.0 / 32_768, accuracy: 0.000001)
+        XCTAssertEqual(buffer.floatChannelData![0][1], 2.0 / 32_768, accuracy: 0.000001)
+    }
+
+    private func makeDatagram(sequence: UInt32, startFrame: UInt64 = 0) -> Data {
         var bytes = [UInt8](repeating: 0, count: 52)
         bytes[0] = 0x53
         bytes[1] = 0x41
@@ -48,6 +78,7 @@ final class AudioPacketTests: XCTestCase {
         bytes[23] = 0x80 // 48 kHz
         bytes[25] = 1 // mono
         bytes[26] = 1 // signed 16-bit little-endian PCM
+        bytes[35] = UInt8(startFrame & 0xff)
         bytes[45] = 4 // payload bytes
         bytes[47] = 2 // frames
         bytes[48] = 1

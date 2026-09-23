@@ -16,6 +16,9 @@
         A10000000000000000000008 = {isa = PBXBuildFile; fileRef = A20000000000000000000009; };
         A10000000000000000000009 = {isa = PBXBuildFile; fileRef = A2000000000000000000000A; };
         A1000000000000000000000A = {isa = PBXBuildFile; fileRef = A2000000000000000000000B; };
+        A1000000000000000000000B = {isa = PBXBuildFile; fileRef = A2000000000000000000000E; };
+        A1000000000000000000000C = {isa = PBXBuildFile; fileRef = A2000000000000000000000F; };
+        A1000000000000000000000D = {isa = PBXBuildFile; fileRef = A20000000000000000000010; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,6 +45,9 @@
         A2000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
         A2000000000000000000000C = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SyncAudioReceiver.app; sourceTree = BUILT_PRODUCTS_DIR; };
         A2000000000000000000000D = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SyncAudioReceiverTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        A2000000000000000000000E = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketPlaybackQueue.swift; sourceTree = "<group>"; };
+        A2000000000000000000000F = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PCMBufferConverter.swift; sourceTree = "<group>"; };
+        A20000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlaybackController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +57,7 @@
 
 /* Begin PBXGroup section */
         A30000000000000000000001 = {isa = PBXGroup; children = (A30000000000000000000002, A30000000000000000000003, A30000000000000000000004, A30000000000000000000005); sourceTree = "<group>"; };
-        A30000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000006, A20000000000000000000007); path = SyncAudioReceiver; sourceTree = "<group>"; };
+        A30000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000006, A20000000000000000000007, A2000000000000000000000E, A2000000000000000000000F, A20000000000000000000010); path = SyncAudioReceiver; sourceTree = "<group>"; };
         A30000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000008); path = SyncAudioReceiverTests; sourceTree = "<group>"; };
         A30000000000000000000004 = {isa = PBXGroup; children = (A20000000000000000000009, A2000000000000000000000A, A2000000000000000000000B); name = Frameworks; sourceTree = "<group>"; };
         A30000000000000000000005 = {isa = PBXGroup; children = (A2000000000000000000000C, A2000000000000000000000D); name = Products; sourceTree = "<group>"; };
@@ -112,7 +118,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-        A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006); runOnlyForDeploymentPostprocessing = 0; };
+        A60000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A1000000000000000000000B, A1000000000000000000000C, A1000000000000000000000D); runOnlyForDeploymentPostprocessing = 0; };
         A60000000000000000000004 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 

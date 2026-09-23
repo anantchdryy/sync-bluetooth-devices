@@ -1,11 +1,12 @@
-# Phase 7: iPhone packet receiver
+# iPhone packet receiver and playback
 
 `SyncAudioReceiver.xcodeproj` is an iPhone app with a small SwiftUI screen. It
 uses Network.framework to listen for the desktop host's `SAUD` UDP packets and
-AVFoundation to inspect the incoming PCM format. It does not play audio or
-attempt synchronization yet. The receive buffer retains up to about 500 ms of
-PCM payloads (also capped at 512 KiB); the displayed buffer depth is retained
-audio duration, not speaker output latency.
+AVAudioEngine to play signed 16-bit PCM. The player converts interleaved PCM to
+floating point, reorders packets by frame index, conceals missing frames with
+silence, and starts after about 180 ms has accumulated. It targets about 250 ms
+of scheduled audio. The receive buffer retains up to about 500 ms of PCM for
+statistics; its displayed depth is separate from queued playback audio.
 
 ## Xcode and device setup
 
@@ -52,7 +53,9 @@ iPhone is required to validate desktop-to-phone Wi-Fi delivery.
    traffic through the desktop firewall if prompted.
 4. The app changes from **Waiting for host packets** to **Receiving** and shows
    the latest sequence number, packets per second, estimated packet loss,
-   sample rate, channel count, and receive buffer depth. Tap **Stop Listening**
+   sample rate, channel count, receive buffer depth, playback queue depth,
+   underruns, concealed frames, and device output pipeline latency. Audio begins
+   when the playback state reads **Playing**. Tap **Stop Listening**
    to release the UDP socket. The app also stops listening when backgrounded.
 
 The host IP field filters incoming datagrams; UDP has no persistent connection.
@@ -60,3 +63,15 @@ If the app stays on **Waiting for host packets**, check both IP addresses, the
 port, local-network permission, firewall, and whether the host command is
 running. Start the phone listener before starting the host so it sees the
 beginning of the stream.
+
+## Playback latency and validation
+
+The startup queue target is 180 ms, and the steady scheduled queue target is
+250 ms. The app reports `outputLatency + ioBufferDuration` from AVAudioSession
+as **Output pipeline**; that value excludes speaker or Bluetooth accessory
+delay. Packet transit time and scheduling also contribute to end-to-end
+latency. These are design targets and API values, not measured acoustic latency.
+The iOS Simulator build and converter/queue tests verify software paths. To
+verify actual audio, run on an iPhone, play an audible WAV on the desktop host,
+and listen on the phone. Record the playback state, underrun count, output
+pipeline value, and whether audio is uninterrupted for at least one minute.

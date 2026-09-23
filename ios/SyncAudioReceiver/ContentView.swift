@@ -42,6 +42,19 @@ struct ContentView: View {
                     LabeledContent("PCM format", value: model.snapshot.sampleRate == nil ? "—" :
                         (model.snapshot.audioFormatSupported ? "16-bit supported" : "Unavailable"))
                 }
+
+                Section("Playback") {
+                    LabeledContent("State", value: model.playback.state)
+                    LabeledContent("Queued audio", value: String(format: "%.1f ms", model.playback.queuedMilliseconds))
+                    LabeledContent("Underruns", value: String(model.playback.underruns))
+                    LabeledContent("Concealed frames", value: String(model.playback.concealedFrames))
+                    LabeledContent("Output pipeline", value: model.playback.outputLatencyMilliseconds.map {
+                        String(format: "%.1f ms", $0)
+                    } ?? "—")
+                    LabeledContent("Device sample rate", value: model.playback.hardwareSampleRate.map {
+                        String(format: "%.0f Hz", $0)
+                    } ?? "—")
+                }
             }
             .navigationTitle("SyncAudio Receiver")
         }

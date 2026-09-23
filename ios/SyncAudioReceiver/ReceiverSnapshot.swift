@@ -13,8 +13,7 @@ struct ReceiverSnapshot {
     var audioFormatSupported = false
 }
 
-/// A bounded receive buffer. It holds PCM payloads for inspection only;
-/// Phase 7 intentionally does not start an AVAudioEngine or play audio.
+/// Packet statistics and a bounded history for receive-depth diagnostics.
 struct StreamAccumulator {
     private(set) var snapshot = ReceiverSnapshot()
     private var sessionID: UInt64?
@@ -32,17 +31,18 @@ struct StreamAccumulator {
         snapshot.status = status
     }
 
-    mutating func record(_ packet: AudioPacket, at now: TimeInterval) {
+    @discardableResult
+    mutating func record(_ packet: AudioPacket, at now: TimeInterval) -> Bool {
         if sessionID != packet.sessionID {
             self = StreamAccumulator()
             sessionID = packet.sessionID
         }
         if let sampleRate = snapshot.sampleRate,
            (sampleRate != packet.sampleRate || snapshot.channels != packet.channels) {
-            return
+            return false
         }
         if !recentSequences.insert(packet.sequenceNumber).inserted {
-            return
+            return false
         }
         recentSequenceOrder.append(packet.sequenceNumber)
         if recentSequenceOrder.count > 4_096 {
@@ -52,7 +52,7 @@ struct StreamAccumulator {
         if let highestSequence {
             let delta = Int32(bitPattern: packet.sequenceNumber &- highestSequence)
             if delta == 0 {
-                return
+                return false
             }
             if delta > 0 {
                 let gap = UInt32(delta - 1)
@@ -92,6 +92,7 @@ struct StreamAccumulator {
         bufferedFrames += UInt64(packet.frameCount)
         bufferedBytes += packet.pcmPayload.count
         trim(at: now)
+        return true
     }
 
     mutating func refresh(at now: TimeInterval) {
